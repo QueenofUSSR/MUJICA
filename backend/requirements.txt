@@ -1,0 +1,14 @@
+# 后端依赖
+fastapi
+uvicorn
+sqlalchemy
+pydantic
+python-dotenv
+pyjwt
+passlib
+bcrypt
+aliyun-python-sdk-core
+aliyun-python-sdk-dysmsapi
+python-jose
+python-multipart
+requests

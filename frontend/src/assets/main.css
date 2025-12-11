@@ -1,0 +1,56 @@
+@import './base.css';
+
+#app {
+    margin: 0 auto;
+    font-weight: normal;
+    background: #fff;
+}
+.dark-theme #app {
+    background: #181a1b;
+}
+
+a,
+.green {
+    text-decoration: none;
+    color: hsla(160, 100%, 37%, 1);
+    transition: 0.4s;
+    padding: 3px;
+}
+
+@media (hover: hover) {
+    a:hover {
+        background-color: hsla(160, 100%, 37%, 0.2);
+    }
+}
+
+.announcement-table {
+    background: transparent;
+    color: #000000;
+}
+
+.dark-theme .announcement-table {
+    color: #ffffff;
+}
+
+.announcement-table th {
+    background-color: #f5f5f5;
+    color: #333333;
+}
+
+.dark-theme .announcement-table th {
+    background-color: #383838;
+    color: #ffffff;
+}
+
+.announcement-table td {
+    border-bottom: 1px solid #dddddd;
+}
+
+.dark-theme .announcement-table td {
+    border-bottom: 1px solid #151515;
+    color: #00f6ff;
+}
+
+.dark-theme .announcement-table tr:hover {
+    background: #262626;
+}
