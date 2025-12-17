@@ -140,8 +140,6 @@ import {library} from "@fortawesome/fontawesome-svg-core";
 library.add(faUser, faIndustry, faUserTag, faPhone, faEnvelope, faBullhorn, faCalendarAlt, faChartBar, faChartLine, faCheckCircle, faTags, faUserCog, faCheck, faEdit);
 const infoItems = [
   {field: 'username', label: '用户名', icon: faUser, editable: true},
-  {field: 'factory', label: '工厂名', icon: faIndustry, editable: false},
-  {field: 'type', label: '账号类型', icon: faUserTag, editable: false},
   {field: 'phone', label: '电话', icon: faPhone, editable: true},
   {field: 'email', label: '邮箱', icon: faEnvelope, editable: true}
 ];
@@ -150,8 +148,6 @@ const authStore = useAuthStore();
 // 账号信息相关
 const user = ref({
   username: authStore.user?.username || '未设置',
-  factory: authStore.user?.factory || '未设置',
-  type: authStore.user?.role === "factory" ? '工厂账号' : (authStore.user?.role === "headquarter" ? '总部账号' : '管理员账号'),
   phone: authStore.user?.phone || '未设置',
   email: authStore.user?.email || '未设置',
   avatar: authStore.user?.avatar || '/default-avatar.jpg'

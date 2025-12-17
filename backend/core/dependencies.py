@@ -1,6 +1,16 @@
+from __future__ import annotations
+
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Load .env from backend/ directory if present
+_here = Path(__file__).parent.parent
+_env_path = _here / '.env'
+if _env_path.exists():
+    load_dotenv(dotenv_path=_env_path)
+
 import json
 import logging
-from pathlib import Path
 from urllib.parse import quote_plus
 
 import redis
@@ -41,11 +51,46 @@ redis_pool = redis.ConnectionPool(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB,
 
 
 def get_redis():
-    redis_client = redis.Redis(connection_pool=redis_pool)
+    # Return a Redis client if available; if Redis is unreachable, yield None so callers can degrade gracefully.
     try:
+        redis_client = redis.Redis(connection_pool=redis_pool)
+        try:
+            # quick health check
+            redis_client.ping()
+        except Exception as e:
+            # DO NOT raise here; yield None to let endpoints handle lack of Redis gracefully
+            logging.getLogger(__name__).warning(f"Redis ping failed during get_redis: {e}")
+            yield None
+            return
         yield redis_client
+    except Exception as e:
+        # Catch any connection pool creation errors and yield None
+        logging.getLogger(__name__).warning(f"get_redis: failed to create redis client: {e}")
+        yield None
     finally:
         pass
+
+
+def publish_event(session_id: int, event: dict, redis_client: redis.Redis | None = None) -> None:
+    """Publish a JSON event to the session Redis channel: session:{id}:events.
+
+    Notes:
+    - `get_redis()` is a FastAPI dependency generator intended to be used with `Depends(get_redis)`
+      inside endpoint functions so FastAPI can manage the dependency lifecycle.
+    - `publish_event` is a general helper that can be called from background tasks or
+      other non-request code where FastAPI's dependency injection isn't available.
+      Therefore it defaults to creating/using a Redis client from the shared connection pool.
+    - By accepting an optional `redis_client`, callers (including unit tests) can inject
+      a client (for example the one from `get_redis()` in an endpoint) for better control.
+    """
+    try:
+        r = redis_client if redis_client is not None else redis.Redis(connection_pool=redis_pool)
+        channel = f"session:{session_id}:events"
+        payload = json.dumps(event, ensure_ascii=False, default=str)
+        r.publish(channel, payload)
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.warning(f"publish_event failed for session {session_id}: {e}")
 
 
 # JWT 和密码哈希配置

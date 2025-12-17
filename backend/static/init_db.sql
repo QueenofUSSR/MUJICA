@@ -1,6 +1,24 @@
 -- search_path: "$user", public
 
 
+CREATE TABLE agent_roles (
+	id SERIAL NOT NULL, 
+	name VARCHAR(80) NOT NULL, 
+	description TEXT, 
+	capabilities JSON, 
+	is_active BOOLEAN NOT NULL, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	CONSTRAINT agent_roles_pkey PRIMARY KEY (id), 
+	CONSTRAINT agent_roles_name_key UNIQUE NULLS DISTINCT (name)
+);
+
+INSERT INTO agent_roles (name, description, capabilities, is_active, created_at, updated_at) VALUES ($dump$retriever$dump$, $dump$检索相关示例$dump$, $dump${"type": "retrieval"}$dump$::jsonb, true, '2025-12-14 10:32:39.531515', '2025-12-14 10:32:39.531515');
+INSERT INTO agent_roles (name, description, capabilities, is_active, created_at, updated_at) VALUES ($dump$planner$dump$, $dump$生成多候选计划$dump$, $dump${"type": "planning"}$dump$::jsonb, true, '2025-12-14 10:32:39.531515', '2025-12-14 10:32:39.531515');
+INSERT INTO agent_roles (name, description, capabilities, is_active, created_at, updated_at) VALUES ($dump$coder$dump$, $dump$根据计划生成代码$dump$, $dump${"type": "coding"}$dump$::jsonb, true, '2025-12-14 10:32:39.531515', '2025-12-14 10:32:39.531515');
+INSERT INTO agent_roles (name, description, capabilities, is_active, created_at, updated_at) VALUES ($dump$debugger$dump$, $dump$基于样例调试并修复$dump$, $dump${"type": "debugging"}$dump$::jsonb, true, '2025-12-14 10:32:39.531515', '2025-12-14 10:32:39.531515');
+
+
 CREATE TABLE users (
 	id SERIAL NOT NULL, 
 	username VARCHAR(50) NOT NULL, 
@@ -14,44 +32,58 @@ CREATE TABLE users (
 );
 
 INSERT INTO users (username, hashed_password, phone, email, avatar, is_active) VALUES ($dump$陈世有$dump$, $dump$$2b$12$mTipNff1//uFpWQWPA5gEOjEFmmE2zyUHy1bI./vAFAHSLG3bEmLm$dump$, $dump$14774710365$dump$, NULL, $dump$/static/avatars/user_1.jpg$dump$, true);
+INSERT INTO users (username, hashed_password, phone, email, avatar, is_active) VALUES ($dump$demo$dump$, $dump$demo$dump$, NULL, NULL, NULL, true);
 
 
-CREATE TABLE agent_conversations (
+CREATE TABLE agent_sessions (
 	id SERIAL NOT NULL, 
 	user_id INTEGER NOT NULL, 
-	title VARCHAR(200), 
+	title VARCHAR(200) NOT NULL, 
+	model_id VARCHAR(80), 
+	status VARCHAR(40) NOT NULL, 
+	metadata JSON, 
+	final_result JSON, 
+	summary_title VARCHAR(200), 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
 	updated_at TIMESTAMP WITHOUT TIME ZONE, 
-	CONSTRAINT agent_conversations_pkey PRIMARY KEY (id), 
-	CONSTRAINT agent_conversations_user_id_fkey FOREIGN KEY(user_id) REFERENCES users (id)
+	CONSTRAINT agent_sessions_pkey PRIMARY KEY (id), 
+	CONSTRAINT agent_sessions_user_id_fkey FOREIGN KEY(user_id) REFERENCES users (id)
 );
 
-INSERT INTO agent_conversations (user_id, title, created_at, updated_at) VALUES (1, $dump$新对话$dump$, '2025-12-11 11:39:04.476528', '2025-12-11 11:42:49.408487');
-INSERT INTO agent_conversations (user_id, title, created_at, updated_at) VALUES (1, $dump$做个自我介绍吧$dump$, '2025-12-11 12:07:04.275974', '2025-12-11 12:09:06.768174');
-INSERT INTO agent_conversations (user_id, title, created_at, updated_at) VALUES (1, $dump$在干嘛呀宝宝~$dump$, '2025-12-11 12:08:51.411446', '2025-12-11 12:17:53.791876');
 
-
-CREATE TABLE agent_messages (
+CREATE TABLE agent_tasks (
 	id SERIAL NOT NULL, 
-	conversation_id INTEGER NOT NULL, 
-	role VARCHAR(32) NOT NULL, 
-	content TEXT NOT NULL, 
-	meta JSON, 
+	session_id INTEGER NOT NULL, 
+	parent_id INTEGER, 
+	assigned_role_id INTEGER, 
+	title VARCHAR(200) NOT NULL, 
+	description TEXT, 
+	status VARCHAR(40) NOT NULL, 
+	confidence DOUBLE PRECISION, 
+	attempt_count INTEGER NOT NULL, 
+	max_attempts INTEGER NOT NULL, 
+	result JSON, 
 	created_at TIMESTAMP WITHOUT TIME ZONE, 
-	CONSTRAINT agent_messages_pkey PRIMARY KEY (id), 
-	CONSTRAINT agent_messages_conversation_id_fkey FOREIGN KEY(conversation_id) REFERENCES agent_conversations (id)
+	updated_at TIMESTAMP WITHOUT TIME ZONE, 
+	CONSTRAINT agent_tasks_pkey PRIMARY KEY (id), 
+	CONSTRAINT agent_tasks_assigned_role_id_fkey FOREIGN KEY(assigned_role_id) REFERENCES agent_roles (id), 
+	CONSTRAINT agent_tasks_parent_id_fkey FOREIGN KEY(parent_id) REFERENCES agent_tasks (id), 
+	CONSTRAINT agent_tasks_session_id_fkey FOREIGN KEY(session_id) REFERENCES agent_sessions (id)
 );
 
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (4, $dump$user$dump$, $dump$你是谁呀$dump$, NULL, '2025-12-11 11:39:04.476528');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (4, $dump$assistant$dump$, $dump$我是DeepSeek，由深度求索公司创造的AI助手！😊 很高兴认识你！我是一个纯文本模型，虽然不支持多模态识别，但我可以帮你处理各种文字任务，比如回答问题、写作、分析、编程等等。我支持上传图像、txt、pdf、ppt、word、excel等文件，并能从中读取文字信息进行处理。最棒的是，我完全免费使用，拥有128K的上下文长度，还支持联网搜索功能（需要你在Web/App中手动点开联网搜索按键）。你也可以通过官方应用商店下载我的App版本。有什么我可以帮助你的吗？无论是学习、工作还是日常问题，我都很乐意为你提供帮助！✨$dump$, NULL, '2025-12-11 11:39:04.476528');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (4, $dump$user$dump$, $dump$解释这段代码：import osimport randomimport reimport smtplibimport uuidfrom datetime import datetime, timedelta, timezonefrom email.header import Headerfrom email.mime.text import MIMETextfrom email.utils import formataddr, formatdatefrom typing import Optionalimport jwtimport redisfrom aliyunsdkcore.client import AcsClientfrom aliyunsdkcore.request import CommonRequestfrom fastapi import APIRouter, Depends, HTTPException, Bodyfrom sqlalchemy.orm import Sessionfrom core.dependencies import get_db, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, pwd_context, get_redis, loggerfrom core.models import Userrouter = APIRouter(prefix="/auth", tags=["用户认证"])def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):    to_encode = data.copy()    if expires_delta:        expire = datetime.now(timezone.utc) + expires_delta    else:        expire = datetime.now(timezone.utc) + timedelta(hours=1)    to_encode.update({"exp": expire})    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)    return encoded_jwt@router.post("/login", summary="用户登录")def login(username: str = Body(..., description="用户名或ID"), password: str = Body(..., description="密码"),          db: Session = Depends(get_db)):    user = None    hashed_password = pwd_context.hash(password)    logger.info(f"用户登录: {username}, 密码哈希: {hashed_password}")    if username.isdigit():        user = db.query(User).filter(User.id == int(username)).first()    if not user:        user = db.query(User).filter(User.username == username).first()    if not user or not pwd_context.verify(password, str(user.hashed_password)):        raise HTTPException(status_code=400, detail="密码错误")    if not user.is_active:        raise HTTPException(status_code=403, detail="账号已被禁用，请联系管理员解除封禁")    # 在 token 中包含权限信息    token_data = {"id": user.id}    access_token = create_access_token(data=token_data,                                       expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))    return {"status": "success", "token": access_token,            "user": {"id": user.id, "username": user.username, "phone": user.phone, "email": user.email, "avatar": user.avatar}}@router.post("/refresh", summary="刷新令牌")async def refresh_token(input_data: dict = Body(...), db: Session = Depends(get_db)):    try:        payload = jwt.decode(input_data.get("access_token", ""), SECRET_KEY, algorithms=[ALGORITHM],                             options={"verify_exp": False})        user_id = payload.get("id")        user = db.query(User).filter(User.id == user_id).first()        if not user:            raise HTTPException(status_code=401, detail="用户无效或已被禁用")        token_exp = datetime.fromtimestamp(payload["exp"], timezone.utc)        if datetime.now(timezone.utc) - token_exp > timedelta(minutes=5):            raise HTTPException(status_code=401, detail="Token 过期时间过长，请重新登录")        new_payload = {"id": user.id}        new_token = create_access_token(new_payload)        return {"new_token": new_token}    except jwt.InvalidTokenError:        raise HTTPException(status_code=401, detail="刷新令牌无效")@router.post("/register", summary="用户注册")def register(username: str = Body(..., description="用户名"), password: str = Body(..., description="密码"),             factory: str = Body(..., description="工厂名称"), phone: str = Body(..., description="电话号码"),             email: str = Body(..., description="电子邮箱"), verificationCode: str = Body(..., description="验证码"),             db: Session = Depends(get_db), redis_client: redis.Redis = Depends(get_redis)):    import time    start_time = time.time()    logger.info(f"注册开始时间: {start_time}")    try:        contact = phone or email        stored_code = redis_client.get(f"verification_code:{contact}")        if not stored_code or stored_code != verificationCode:            raise HTTPException(status_code=400, detail="验证码无效或已过期")        # 检查用户名是否已存在        if db.query(User).filter(User.username == username).first():            raise HTTPException(status_code=400, detail="用户名已存在")        hashed_password = pwd_context.hash(password)        new_user = User(username=username, hashed_password=hashed_password,  phone=phone, email=email, is_active=True)        db.add(new_user)        db.commit()        db.refresh(new_user)        token_data = {"id": new_user.id, "role": new_user.role, "factory": new_user.factory,                      "departments": new_user.departments}        access_token = create_access_token(data=token_data,                                           expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))        return {"token": access_token,                "user": {"id": new_user.id, "username": new_user.username, "factory": new_user.factory,                         "departments": new_user.departments, "role": new_user.role, "phone": new_user.phone,                         "email": new_user.email, "avatar": new_user.avatar}}    except Exception as e:        logger.error(f"注册异常: {e}")        raise HTTPException(status_code=500, detail="注册失败")def send_sms(phone: str, code: str):    client = AcsClient(os.getenv("ALIBABA_CLOUD_ACCESS_KEY_ID"), os.getenv("ALIBABA_CLOUD_ACCESS_KEY_SECRET"),                       "cn-hangzhou")    request = CommonRequest()    request.set_method("POST")    request.set_domain("dysmsapi.aliyuncs.com")    request.set_version("2017-05-25")    request.set_action_name("SendSms")    request.add_query_param("PhoneNumbers", phone)    request.add_query_param("SignName", "你的签名名称")  # 替换为你的短信签名    request.add_query_param("TemplateCode", "你的模板CODE")  # 替换为你的短信模板CODE    request.add_query_param("TemplateParam", f'{{"code":"{code}"}}')    response = client.do_action_with_exception(request)    return response.decode("utf-8")def send_email(to_email: str, code: str):    smtp_server = "smtp.qq.com"  # QQ 邮箱 SMTP 服务器    smtp_port = 465    sender = "chensy_1213@qq.com"  # 你的 QQ 邮箱    email_password = "afkydblqtgxjdiai"  # 替换为 QQ 邮箱生成的授权码    subject = "验证码通知"    content = f"您的Multi-Agent账号验证码是：{code}，有效期5分钟。"    message = MIMEText(content, "plain", "utf-8")    # 修正头部格式 - 使用标准格式    message["From"] = formataddr(("多智能体协作任务系统", sender))    message["To"] = to_email    message["Subject"] = Header(subject, "utf-8")    message["Message-ID"] = f"<{uuid.uuid4()}@{smtp_server.split('.')[0]}>"    message["Date"] = formatdate(localtime=True)    try:        server = smtplib.SMTP_SSL(smtp_server, smtp_port)        server.login(sender, email_password)        server.sendmail(sender, [to_email], message.as_string())        server.quit()        logger.info(f"邮件已发送至 {to_email}")        return True    except smtplib.SMTPAuthenticationError as e:        logger.error(f"邮件发送失败: SMTP 认证失败 - {e}")        raise HTTPException(status_code=500, detail="SMTP 认证失败，请检查邮箱授权码")    except Exception as e:        logger.error(f"邮件发送失败: {e}")        raise HTTPException(status_code=500, detail="邮件发送失败")@router.post("/verification", summary="发送验证码到手机或邮箱")def send_verification_code(phone: Optional[str] = Body(None, description="电话号码"),                           email: Optional[str] = Body(None, description="电子邮箱"),                           redis_client: redis.Redis = Depends(get_redis)):    if not phone and not email:        raise HTTPException(status_code=400, detail="请提供电话号码或邮箱")    if phone and email:        raise HTTPException(status_code=400, detail="只能提供电话号码或邮箱中的一种")    verification_code = str(random.randint(100000, 999999))    target = phone or email    redis_client.setex(f"verification_code:{target}", 300, verification_code)    if phone:        send_sms(phone, verification_code)        channel = "手机"    else:        send_email(email, verification_code)        channel = "邮箱"    return {"success": True, "message": f"验证码已发送至您的{channel}", "channel": channel, "target": target}@router.post("/forgot-password", summary="忘记密码发送验证码")def forgot_password(text: str = Body(..., description="用户名/邮箱/手机号"), db: Session = Depends(get_db),                    redis_client: redis.Redis = Depends(get_redis)):    email_pattern = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"    phone_pattern = r"^1[3-9]\d{9}$"    if re.match(email_pattern, text):        user = db.query(User).filter(User.email == text).first()        if not user:            raise HTTPException(status_code=404, detail="邮箱未注册")        target = user.email        channel = "邮箱"    elif re.match(phone_pattern, text):        user = db.query(User).filter(User.phone == text).first()        if not user:            raise HTTPException(status_code=404, detail="手机号未注册")        target = user.phone        channel = "手机"    else:        user = db.query(User).filter(User.username == text).first()        if not user:            raise HTTPException(status_code=404, detail="用户名未注册")        if user.email:            target = user.email            channel = "邮箱"        elif user.phone:            target = user.phone            channel = "手机"        else:            raise HTTPException(status_code=400, detail="该用户未绑定邮箱或手机号")    verification_code = str(random.randint(100000, 999999))    redis_client.setex(f"verification_code:{target}", 300, verification_code)    if channel == "邮箱":        send_email(str(target), verification_code)    else:        send_sms(str(target), verification_code)    return {"success": True, "message": f"验证码已发送至您的{channel}", "channel": channel, "target": target}$dump$, NULL, '2025-12-11 11:39:04.476528');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (4, $dump$assistant$dump$, $dump$这是一个基于 FastAPI 的用户认证模块代码，主要实现了以下功能：## 一、核心功能模块### 1. **JWT令牌管理**- `create_access_token()`：生成JWT访问令牌，包含用户ID和过期时间- 支持自定义过期时间，默认1小时- 使用HS256算法加密### 2. **用户登录** (`/auth/login`)- 支持用户名或用户ID登录- 验证密码（使用bcrypt哈希）- 检查账号是否被禁用- 登录成功后返回JWT令牌和用户信息### 3. **令牌刷新** (`/auth/refresh`)- 刷新即将过期的令牌- 允许令牌过期5分钟内刷新- 防止过长时间后刷新### 4. **用户注册** (`/auth/register`)- 验证手机/邮箱验证码（从Redis获取）- 检查用户名是否重复- 创建新用户并返回登录令牌### 5. **验证码发送** (`/auth/verification`)- 向手机或邮箱发送6位随机验证码- 验证码存储在Redis中，5分钟过期- 支持阿里云短信和QQ邮箱发送### 6. **忘记密码** (`/auth/forgot-password`)- 通过用户名/邮箱/手机号找回- 自动识别输入类型- 发送验证码到绑定的联系方式## 二、技术特点### 安全机制：- 密码使用bcrypt哈希存储- JWT令牌认证- 验证码防刷（Redis存储）- 账号禁用检查### 依赖服务：- **数据库**：SQLAlchemy + MySQL/PostgreSQL- **缓存**：Redis存储验证码- **短信**：阿里云短信服务- **邮件**：QQ邮箱SMTP服务### 错误处理：- 详细的HTTP异常响应- 完整的日志记录- 输入参数验证## 三、使用流程1. **注册流程**：发送验证码 → 验证验证码 → 创建用户2. **登录流程**：验证凭证 → 生成令牌 → 返回用户信息3. **密码找回**：识别用户 → 发送验证码 → 后续重置密码这是一个典型的企业级用户认证系统，包含了现代Web应用所需的基本认证功能，代码结构清晰，安全性考虑全面。$dump$, NULL, '2025-12-11 11:39:04.476528');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (8, $dump$user$dump$, $dump$做个自我介绍吧$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (8, $dump$assistant$dump$, $dump$你好！我是DeepSeek，由深度求索公司创造的AI助手。很高兴认识你！😊让我简单介绍一下自己：- 我是一个纯文本模型，擅长理解和生成中文内容- 支持文件上传功能，可以处理图像、txt、pdf、ppt、word、excel等文件，并从中读取文字信息- 拥有128K的上下文长度，能处理较长的对话和文档- 完全免费使用，没有收费计划- 支持联网搜索功能（需要手动开启）- 可以通过官方应用商店下载App使用我的知识截止到2024年7月，会以热情细腻的方式为你提供帮助。无论是回答问题、协助思考、处理文档，还是日常聊天，我都很乐意为你服务！有什么我可以帮助你的吗？$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$user$dump$, $dump$在干嘛呀宝宝~$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$assistant$dump$, $dump$在休息呢，宝宝想我啦？😊$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$user$dump$, $dump$666你是男的还是女的$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$assistant$dump$, $dump$我是女生呀，宝宝怎么突然问这个～😊$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$user$dump$, $dump$你太会说话了$dump$, NULL, '2025-12-11 12:08:51.412433');
-INSERT INTO agent_messages (conversation_id, role, content, meta, created_at) VALUES (9, $dump$assistant$dump$, $dump$谢谢宝宝夸奖～和你聊天很开心呀😊$dump$, NULL, '2025-12-11 12:08:51.412433');
+
+CREATE TABLE agent_task_logs (
+	id SERIAL NOT NULL, 
+	session_id INTEGER NOT NULL, 
+	task_id INTEGER, 
+	role_id INTEGER, 
+	level VARCHAR(32) NOT NULL, 
+	message TEXT NOT NULL, 
+	payload JSON, 
+	created_at TIMESTAMP WITHOUT TIME ZONE, 
+	CONSTRAINT agent_task_logs_pkey PRIMARY KEY (id), 
+	CONSTRAINT agent_task_logs_role_id_fkey FOREIGN KEY(role_id) REFERENCES agent_roles (id), 
+	CONSTRAINT agent_task_logs_session_id_fkey FOREIGN KEY(session_id) REFERENCES agent_sessions (id), 
+	CONSTRAINT agent_task_logs_task_id_fkey FOREIGN KEY(task_id) REFERENCES agent_tasks (id)
+);
 

@@ -20,10 +20,21 @@ export const useConversationStore = defineStore('conversation', {
       this.loading = true;
       this.error = null;
       try {
-        const res = await apiClient.get('/agent');
-        const payload = res.data || {};
-        this.setConversations(payload.conversations || []);
-        return payload;
+        // ensure Authorization header present (fallback to localStorage token)
+        try {
+          const token = localStorage.getItem('access_token');
+          if (token && !apiClient.defaults.headers.Authorization && !apiClient.defaults.headers.common?.Authorization) {
+            apiClient.defaults.headers.common = apiClient.defaults.headers.common || {};
+            apiClient.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          }
+        } catch (e) {}
+        const tokenParam = (typeof window !== 'undefined' && localStorage.getItem('access_token')) ? localStorage.getItem('access_token') : null;
+        const url = tokenParam ? `/mapcoder/session?token=${encodeURIComponent(tokenParam)}` : '/mapcoder/session';
+        const res = await apiClient.get(url);
+        const payload = res.data || [];
+        const normalized = (Array.isArray(payload) ? payload : []).sort((a,b) => Number(b.id) - Number(a.id));
+        this.setConversations(normalized);
+        return { conversations: normalized };
       } catch (err) {
         this.error = err;
         throw err;
@@ -33,4 +44,3 @@ export const useConversationStore = defineStore('conversation', {
     }
   }
 });
-

@@ -12,3 +12,4 @@ aliyun-python-sdk-dysmsapi
 python-jose
 python-multipart
 requests
+openai

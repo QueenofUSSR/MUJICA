@@ -8,7 +8,7 @@ import AIChatView from '@/views/AIChatView.vue';
 const routes = [{path: '/login', component: LoginView}, {
     path: '/profile', component: ProfileView
 },
-{ path: '/ai-chat', component: AIChatView }
+{ path: '/overview', component: AIChatView }
 ]
 
 const router = createRouter({

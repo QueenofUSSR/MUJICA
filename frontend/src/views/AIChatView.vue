@@ -1,66 +1,123 @@
 <template>
   <div class="ai-chat-page">
-    <!-- conversation list moved to global Siderbar component; AIChatView only renders the chat area -->
-
     <section class="chat-area">
       <header class="chat-header">
-        <div class="title">{{ currentConversation?.title || '聊天' }}</div>
+        <div class="title">{{ currentConversation?.title || '多智能体会话' }}</div>
         <div class="header-actions">
-          <button class="icon-btn" title="清空聊天记录" aria-label="清空聊天记录" @click="onClickClear"
-                  :disabled="clearing">
+          <button class="icon-btn" title="清空会话" aria-label="清空会话" @click="onClickClear" :disabled="clearing">
             <font-awesome-icon icon="trash-alt"/>
           </button>
           <div class="draft" v-if="hasDraft">草稿已保存</div>
+          <button class="btn run-btn" @click="runSession" :disabled="runDisabled">
+            <span v-if="running" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+            <span v-else style="color: #0b0b49">运行任务</span>
+          </button>
+          <button class="btn stop-btn" v-if="canStopSession" @click="stopSession">停止</button>
+          <div v-if="runProgress" class="run-progress" :class="{'text-success': runProgress === '已完成' || runProgress==='completed', 'text-danger': runProgress === '失败' || runProgress==='failed'}">
+            {{ runProgress }}
+          </div>
         </div>
       </header>
 
-      <!-- Confirm modal for clearing chat -->
-      <div v-if="showClearConfirm" class="confirm-overlay" @keydown.esc="cancelClear" @click.self="cancelClear" tabindex="-1">
-        <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title" ref="confirmDialogRef" tabindex="0">
-            <div class="confirm-body">清空后将无法恢复历史消息，是否确认删除当前会话？</div>
-            <div class="confirm-actions">
-              <button class="btn btn-confirm" @click="confirmClear" :disabled="clearing">确认</button>
-            </div>
-        </div>
-      </div>
+      <nav class="tabs">
+        <button :class="['tab', {active: activeTab === 'overview'}]" @click="activeTab = 'overview'">总览</button>
+        <button :class="['tab', {active: activeTab === 'tasks'}]" @click="activeTab = 'tasks'">子任务</button>
+        <button :class="['tab', {active: activeTab === 'logs'}]" @click="activeTab = 'logs'">日志</button>
+      </nav>
 
-      <div class="messages" ref="messagesEl">
-        <div v-for="m in messages" :key="m.id + (m.streaming ? '-s' : '-f')" :class="['message', m.role]">
-          <div class="bubble">
-            <template v-if="m.role === 'assistant'">
-              <!-- Always render assistant content as HTML produced by markdown-it. This ensures ordered lists and other markdown
-                   structures are parsed and rendered during streaming and on initial load. -->
-              <div class="assistant-content" v-html="formatMessage(m.content)"></div>
-            </template>
-            <div v-else class="user-content">{{ m.content }}</div>
-            <div class="status" v-if="m.status && m.status !== '已完成'">{{ m.status }}</div>
+      <!-- Overview: 任务需求 + 最终产物 -->
+      <section v-if="activeTab === 'overview'" class="panel overview">
+        <div class="overview-row">
+          <!-- 任务需求输入 -->
+          <div class="prompt-card">
+            <label class="prompt-label">任务需求</label>
+            <textarea ref="inputEl" v-model="overviewPrompt" class="prompt-textarea" rows="4" placeholder="例如：请为我实现一个Java的快速排序，并附带简单测试用例" @input="onInput"></textarea>
+            <div class="prompt-help">提示：填写后点击右上角“运行任务”，系统将按检索→规划→编码→调试的顺序逐步执行。</div>
+          </div>
+
+          <div class="final-result">
+            <h3>最终产物</h3>
+            <div v-if="finalResult">
+              <div class="artifact-meta">来源: {{ finalResult.title || currentConversation?.title }}</div>
+              <div v-if="finalResult.code">
+                <div class="code-actions">
+                  <button class="btn" @click="downloadFinalResult">下载</button>
+                </div>
+                <pre class="code-block hljs"><code v-html="highlightCode(finalResult.code)"></code></pre>
+              </div>
+              <div v-else-if="finalResult.text">
+                <div class="text-artifact" v-html="formatMessage(finalResult.text)"></div>
+              </div>
+              <div v-else>
+                <div class="empty">未生成最终产物</div>
+              </div>
+            </div>
+            <div v-else class="empty">尚无结果，运行任务后将显示最终聚合产物。</div>
+            <div v-if="!finalResult" class="help-card">
+              <h4>快速上手</h4>
+              <ol>
+                <li>在左侧选择或新建一个会话（点击“＋ 新建会话”）。</li>
+                <li>在上方“任务需求”中填写你的任务描述，然后点击“运行任务”。</li>
+                <li>切到 <strong>Tasks</strong> 查看子任务进度与结果。</li>
+                <li>最终产物将在此处展示，可下载或复制。</li>
+              </ol>
+              <div class="help-actions">
+                <button class="btn" @click="() => { /* 预留：加载示例 */ }">查看示例</button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </section>
 
-      <footer class="chat-input">
-        <textarea ref="inputEl" v-model="input" rows="4" @input="onInput" @keydown.enter.exact.prevent="onSend"
-                  placeholder="输入消息，按 Enter 发送">
-        </textarea>
-        <div class="controls" aria-hidden="false">
-          <select v-model="modelId" class="model-select" title="选择模型">
-            <option value="deepseek-chat">deepseek-chat</option>
-            <option value="deepseek-reasoner">deepseek-reasoner</option>
-          </select>
+      <!-- Tasks panel -->
+      <section v-if="activeTab === 'tasks'" class="panel tasks-panel">
+        <h3>子任务列表</h3>
+        <ul class="task-list">
+          <li v-for="t in visibleTasks" :key="t.id" :class="['task-item', roleColor(t.assigned_role_id)]">
+            <div class="task-header" @click="toggleTaskCollapse(t.id)">
+              <div class="task-title">
+                <span class="task-toggle" :class="{collapsed: isTaskCollapsed(t.id)}"></span>
+                {{ t.title }} <span class="role">[{{ getRoleName(t.assigned_role_id) }}]</span>
+              </div>
+              <div class="task-meta">状态: {{ t.status }} · 置信度: {{ t.confidence ?? '-' }}</div>
+            </div>
+            <div class="task-body" v-if="taskResultText(t)">
+              <div class="result" v-if="!isTaskCollapsed(t.id)">
+                <strong>结果</strong>
+                <pre class="result-block">{{ taskResultText(t) }}</pre>
+              </div>
+              <div class="result collapsed-preview" v-else>
+                <strong>结果</strong>
+                <p>{{ truncatedTaskResult(t, 120) }}</p>
+              </div>
+            </div>
+            <div class="task-actions">
+              <button class="btn btn-copy" @click.stop="copyTaskResult(t)">复制</button>
+              <button class="btn btn-download" @click.stop="downloadTaskResult(t)">下载</button>
+            </div>
+          </li>
+        </ul>
+      </section>
 
-          <button class="send-icon" title="发送" aria-label="发送消息" :class="{disabled: sending || !input.trim()}"
-                  :disabled="sending || !input.trim()" @click="onSend">
-            <font-awesome-icon icon="paper-plane"/>
-          </button>
-        </div>
-      </footer>
+      <!-- Logs panel -->
+      <section v-if="activeTab === 'logs'" class="panel logs-panel">
+        <h3>执行日志</h3>
+        <ul class="log-list">
+          <li v-for="l in logs" :key="l.id" class="log-item">
+            <div class="log-meta">[{{ l.level }}] {{ l.created_at }}</div>
+            <div class="log-msg">{{ l.message }}</div>
+            <div class="log-payload" v-if="l.payload">{{ JSON.stringify(l.payload) }}</div>
+          </li>
+        </ul>
+      </section>
+
+      <!-- Input area removed (chat footer) -->
     </section>
-
   </div>
 </template>
 
 <script setup>
-import {computed, nextTick, onMounted, ref, watch} from 'vue';
+import {computed, nextTick, onMounted, ref, watch, onUnmounted} from 'vue';
 import {useRoute} from 'vue-router';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
@@ -79,21 +136,8 @@ library.add(faTrashAlt, faPaperPlane);
 const md = new MarkdownIt({
   html: false,
   linkify: true,
-  breaks: true, // 启用换行符转换
-  typographer: true, // 启用排版优化
-  highlight: function (str, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      try {
-        return '<pre class="hljs"><code>' + hljs.highlight(str, {language: lang}).value + '</code></pre>';
-      } catch (__) {
-      }
-    }
-    try {
-      return '<pre class="code-block hljs"><code>' + hljs.highlightAuto(str).value + '</code></pre>';
-    } catch (__) {
-    }
-    return '<pre class="code-block hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
-  }
+  breaks: true,
+  typographer: true,
 });
 
 // Reactive state
@@ -107,121 +151,278 @@ const input = ref('');
 const inputEl = ref(null); // textarea ref
 const sending = ref(false);
 const clearing = ref(false);
-// continuousConversation and queryDatabase removed; backend will always use recent context
-const modelId = ref('deepseek-chat');
+const modelId = ref('gpt-4o');
+// Add task prompt string to back the Overview textarea and template trim()
+const overviewPrompt = ref('');
 const draftKey = (id) => `ai_draft_user_${id}`;
 const authStore = useAuthStore();
 const MIN_ROWS = 3;
 const MAX_ROWS = 10;
 
-function adjustTextareaHeight() {
-  const el = inputEl.value;
-  if (!el) return;
-  el.style.height = 'auto';
-  const cs = window.getComputedStyle(el);
-  let lineHeight = parseFloat(cs.lineHeight);
-  if (!lineHeight || isNaN(lineHeight)) {
-    const fontSize = parseFloat(cs.fontSize) || 16;
-    lineHeight = fontSize * 1.2;
-  }
-  const paddingTop = parseFloat(cs.paddingTop) || 0;
-  const paddingBottom = parseFloat(cs.paddingBottom) || 0;
-  const borderTop = parseFloat(cs.borderTopWidth) || 0;
-  const borderBottom = parseFloat(cs.borderBottomWidth) || 0;
-  const maxHeight = Math.round(lineHeight * MAX_ROWS + paddingTop + paddingBottom + borderTop + borderBottom);
-  const minHeight = Math.round(lineHeight * MIN_ROWS + paddingTop + paddingBottom + borderTop + borderBottom);
-  el.style.minHeight = minHeight + 'px';
-  const desired = el.scrollHeight;
-  const newHeight = Math.min(desired, maxHeight);
-  el.style.height = newHeight + 'px';
-  if (desired > maxHeight) {
-    el.style.overflowY = 'auto';
-  } else {
-    el.style.overflowY = 'hidden';
-  }
-}
+// add route here so it's available to functions and watchers defined below
+const route = useRoute();
 
-function scrollMessages() {
-  try {
-    if (messagesEl.value) {
-      nextTick(() => {
-        try {
-          messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-        } catch (e) {
-        }
-      });
-    }
-  } catch (e) {
-  }
-}
+// New multi-agent UI state
+const activeTab = ref('overview');
+const finalResult = ref(null);
+const tasks = ref([]);
+const collapsedTasks = ref(new Set());
+const visibleTasks = computed(() => (tasks.value || [])
+  .filter(t => t && t.parent_id !== null && t.parent_id !== undefined)
+  .sort((a, b) => Number(a.id) - Number(b.id)));
+const logs = ref([]);
+const sessionStatus = ref(''); // 'queued' | 'running' | 'completed' | 'failed' | ''
+const currentSessionId = ref(null);
+let lastTasksRefreshSessionId = null;
 
-function onInput() {
-  adjustTextareaHeight();
-}
-
-// formatting helper used in template
-function formatMessage(text) {
-  if (!text) return '';
-  try {
-    let processedText = text
-        .replace(/\*\*(.*?)\*\*/g, '**$1**') // 确保粗体格式
-        .replace(/\*(.*?)\*/g, '*$1*') // 确保斜体格式
-        .replace(/`(.*?)`/g, '`$1`'); // 确保代码格式
-    return md.render(processedText);
-  } catch (e) {
-    console.error('Markdown 渲染错误:', e);
-    return text.replace(/\n/g, '<br>');
-  }
-}
-
-watch(() => conversationStore.conversations, (list) => {
-  conversations.value = list || [];
-}, { immediate: true });
-
+// Define loadConversations early so mounted hook can use it safely
 async function loadConversations() {
   try {
-    const res = await conversationStore.fetchConversations();
-    const payload = res || {};
-    conversations.value = payload.conversations || [];
-    const curr = payload.current || null;
-    if (curr) {
-      conversationId.value = curr.id;
-      currentConversation.value = {id: curr.id, title: curr.title, created_at: curr.created_at};
-      messages.value = curr.messages || [];
-    } else {
-      conversationId.value = null;
-      currentConversation.value = null;
-      messages.value = [];
+    const token = authStore.accessToken;
+    const url = token ? `/mapcoder/session?token=${encodeURIComponent(token)}` : '/mapcoder/session';
+    const res = await apiClient.get(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const list = Array.isArray(res.data) ? res.data : [];
+    list.sort((a, b) => Number(b.id) - Number(a.id));
+    conversations.value = list;
+    if (!conversationId.value && list.length) {
+      await openConversation(list[0].id);
     }
-
-    const uid = authStore.user?.id;
-    const draft = uid ? localStorage.getItem(draftKey(uid)) : null;
-    input.value = draft || '';
-
-    await nextTick(() => {
-      try {
-        messagesEl.value.scrollTop = messagesEl.value.scrollHeight;
-      } catch (e) {}
-    });
   } catch (e) {
-    console.error('Failed to load conversations', e);
+    console.warn('加载会话列表失败', e);
   }
 }
 
+function syncCollapsedTasks(list) {
+  const ids = new Set((list || []).map(t => Number(t.id)));
+  const next = new Set();
+  ids.forEach(id => next.add(id));
+  collapsedTasks.value = next;
+}
+
+function applyTasks(list) {
+  const normalized = Array.isArray(list) ? list : [];
+  tasks.value = normalized;
+  syncCollapsedTasks(normalized);
+}
+
+// New UI state for run/polling and selected task
+const running = ref(false);
+const runProgress = ref('');
+const selectedTask = ref(null);
+let pollTimer = null;
+let fallbackTimer = null;
+let debugAttempted = false;
+const sessionActiveStatuses = ['pending','queued','running'];
+const isSessionActive = computed(() => {
+  const status = (sessionStatus.value || '').toLowerCase();
+  return !!currentSessionId.value && sessionActiveStatuses.includes(status);
+});
+const runDisabled = computed(() => {
+  const promptEmpty = !overviewPrompt.value || !overviewPrompt.value.trim();
+  return promptEmpty || !conversationId.value || running.value || isSessionActive.value;
+});
+const canStopSession = computed(() => isSessionActive.value);
+function taskResultText(task) {
+  if (!task) return '';
+  const res = task.result || {};
+  return res.code || res.text || res.output || task.plan || '';
+}
+// SSE (Server-Sent Events) subscription
+const sse = ref(null);
+const sseStatus = ref('idle'); // 'idle' | 'connecting' | 'connected' | 'fallback'
+let sseConnectTimer = null;
+let startSSEDebounceTimer = null;
+
+// helper to try debug SSE endpoint once
+function tryDebugSSE(sessionId) {
+  if (debugAttempted) return false;
+  debugAttempted = true;
+  try {
+    const base = apiClient.defaults.baseURL || '';
+    const token = authStore.accessToken;
+    const url = token ? `${base}/mapcoder/session/${sessionId}/debug-events?token=${encodeURIComponent(token)}` : `${base}/mapcoder/session/${sessionId}/debug-events`;
+    const esd = new EventSource(url);
+    let connected = false;
+    const t = setTimeout(() => {
+      if (!connected) {
+        try { esd.close(); } catch (e) {}
+      }
+    }, 4000);
+    esd.onopen = () => {
+      connected = true;
+      clearTimeout(t);
+      console.log('Debug SSE connected for session', sessionId);
+      sse.value = esd; // reuse sse variable so handlers work
+    };
+    esd.onmessage = (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        handleSSEEvent(payload);
+      } catch (e) {}
+    };
+    esd.onerror = (e) => {
+      console.warn('Debug SSE error', e);
+      try { esd.close(); } catch (err) {}
+    };
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function startSSE(sessionId) {
+  stopSSE();
+  if (!sessionId) return;
+  const base = apiClient.defaults.baseURL || '';
+  const token = authStore.accessToken;
+  const url = token ? `${base}/mapcoder/session/${sessionId}/events?token=${encodeURIComponent(token)}` : `${base}/mapcoder/session/${sessionId}/events`;
+  try {
+    sseStatus.value = 'connecting';
+    const es = new EventSource(url);
+    sse.value = es;
+    es.onopen = () => {
+      sseStatus.value = 'connected';
+    };
+    es.onmessage = (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        handleSSEEvent(payload);
+      } catch (e) {}
+    };
+    es.onerror = () => {
+      stopSSE();
+      startFallbackPolling(sessionId);
+    };
+  } catch (e) {
+    console.warn('SSE failed, fallback to polling', e);
+    startFallbackPolling(sessionId);
+  }
+}
+
+function stopSSE() {
+  if (sseConnectTimer) { clearTimeout(sseConnectTimer); sseConnectTimer = null; }
+  if (sse.value) {
+    try { sse.value.close(); } catch (e) {}
+    sse.value = null;
+  }
+  // 不改变 sseStatus，这由上层流程来设置
+}
+
+async function fetchSessionStatus(sessionId) {
+  try {
+    const res = await apiClient.get(`/mapcoder/session/${sessionId}/status`);
+    const data = res.data || {};
+    // merge logs and tasks from status response
+    if (Array.isArray(data.recent_logs)) {
+      // recent_logs comes most recent first in backend; normalize to chronological
+      const recent = (data.recent_logs || []).slice().reverse();
+      // prepend new logs not already present (by id)
+      const existingIds = new Set(logs.value.map(l => Number(l.id)));
+      recent.forEach(l => { if (!existingIds.has(Number(l.id))) logs.value.push(l); });
+    }
+    if (Array.isArray(data.active_tasks)) {
+      // replace tasks list with active tasks for simplicity
+      tasks.value = data.active_tasks || tasks.value;
+    }
+    // if session reported final status, refresh full session
+    const sess = data.session || {};
+    const statusLower = (sess.status || '').toLowerCase();
+    if (sessionActiveStatuses.includes(statusLower)) {
+      sessionStatus.value = sess.status;
+      running.value = true;
+    }
+    if (sess.status === 'completed' || sess.status === 'failed' || sess.status === 'canceled') {
+      running.value = false;
+      runProgress.value = sess.status;
+      stopPolling();
+      stopSSE();
+      stopFallbackPolling();
+      sseStatus.value = 'idle';
+      await openSession(sessionId);
+    }
+  } catch (e) {
+    // ignore transient errors
+    console.warn('fallback poll error', e);
+  }
+}
+
+function startFallbackPolling(sessionId) {
+  stopFallbackPolling();
+  // immediate fetch then interval
+  fetchSessionStatus(sessionId);
+  fallbackTimer = setInterval(() => fetchSessionStatus(sessionId), 2000);
+}
+
+function stopFallbackPolling() {
+  if (fallbackTimer) {
+    clearInterval(fallbackTimer);
+    fallbackTimer = null;
+  }
+}
+
+// modify openConversation to use conversation detail before legacy /agent
 async function openConversation(id) {
   try {
-    const res = await apiClient.get('/agent', {params: {conversation_id: id}});
+    const res = await apiClient.get(`/mapcoder/session/${id}`);
     const payload = res.data || {};
     conversationId.value = payload.id || id;
-    currentConversation.value = {id: payload.id, title: payload.title || ('会话 ' + id), created_at: payload.created_at};
-    messages.value = payload.messages || [];
-    await nextTick(() => adjustTextareaHeight());
-    scrollMessages();
+    currentConversation.value = { id: conversationId.value, title: payload.title || (`任务 ${conversationId.value}`), created_at: payload.created_at };
+    overviewPrompt.value = (payload.metadata?.prompt) || '';
+    finalResult.value = payload.final_result || null;
+    tasks.value = payload.tasks || [];
+    logs.value = payload.logs || [];
+    sessionStatus.value = payload.status || '';
+    activeTab.value = 'overview';
   } catch (e) {
     console.error('openConversation failed', e);
   }
 }
 
+// new: open a specific session and start SSE on it
+async function openSession(sessionId) {
+  try {
+    const res = await apiClient.get(`/mapcoder/session/${sessionId}`);
+    const payload = res.data || {};
+    currentSessionId.value = payload.id || sessionId;
+    conversationId.value = payload.conversation_id || conversationId.value;
+    currentConversation.value = { id: conversationId.value, title: payload.title || currentConversation.value?.title, created_at: payload.created_at };
+    messages.value = Array.isArray(payload.messages) ? payload.messages : messages.value;
+    finalResult.value = payload.final_result || null;
+    tasks.value = payload.tasks || [];
+    logs.value = payload.logs || [];
+    sessionStatus.value = payload.status || '';
+    activeTab.value = 'overview';
+    const isFinal = !!finalResult.value || sessionStatus.value === 'completed' || sessionStatus.value === 'failed';
+    if (isFinal) {
+      running.value = false;
+      runProgress.value = sessionStatus.value;
+      stopPolling();
+      stopSSE();
+      stopFallbackPolling();
+      sseStatus.value = 'idle';
+      currentSessionId.value = null;
+    } else {
+      running.value = true;
+      startSSE(currentSessionId.value);
+    }
+    await nextTick(() => adjustTextareaHeight());
+    scrollMessages();
+  } catch (e) {
+    console.error('openSession failed', e);
+  }
+}
+
+// also stopSSE when switching sessions via watch on route.query
+watch(() => route.query?.session_id, async (val) => {
+  if (!val) return;
+  const id = parseInt(Array.isArray(val) ? val[0] : val);
+  if (!isNaN(id) && id !== conversationId.value) {
+    stopSSE();
+    await openConversation(id);
+  }
+});
+
+// existing onSend remains almost unchanged, kept for streaming behavior
 async function onSend() {
   const text = input.value.trim();
   if (!text) return;
@@ -245,11 +446,7 @@ async function onSend() {
     messages.value.push(assistantMsg);
     scrollMessages();
 
-    // include conversation_id when sending if present
-    const body = {
-      text: text,
-      model_id: modelId.value
-    };
+    const body = { text: text, model_id: modelId.value };
     if (conversationId.value) body.conversation_id = conversationId.value;
 
     const response = await fetch('http://localhost:8000/agent', {
@@ -262,14 +459,12 @@ async function onSend() {
     });
 
     if (!response.ok) {
-      // Backend returned error (e.g., 503 when model provider is not configured)
       const errText = await response.text().catch(() => response.statusText || '请求失败');
       assistantMsg.streaming = false;
       assistantMsg.status = '调用模型失败';
       assistantMsg.content = '';
       sending.value = false;
       showError(new Error(`模型调用失败: ${errText}`));
-      // reload conversation list to reflect that user message was saved but no assistant reply
       await loadConversations();
       if (conversationId.value) {
         await openConversation(conversationId.value);
@@ -288,8 +483,8 @@ async function onSend() {
         if (done) break;
         const chunk = decoder.decode(value, {stream: true});
         accumulatedText += chunk;
-            assistantMsg.content = accumulatedText;
-            scrollMessages();
+        assistantMsg.content = accumulatedText;
+        scrollMessages();
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       assistantMsg.streaming = false;
@@ -299,7 +494,7 @@ async function onSend() {
       reader.releaseLock();
     }
 
-    // after sending, reload conversation list and current messages to reflect saved messages
+    // reload conversation to get persisted messages, tasks, logs and final_result
     await loadConversations();
     if (conversationId.value) {
       await openConversation(conversationId.value);
@@ -313,45 +508,31 @@ async function onSend() {
   }
 }
 
-
 async function clearChat() {
   if (!conversationId.value) {
-    messages.value = [];
-    const uid = authStore.user?.id;
-    if (uid) localStorage.removeItem(draftKey(uid));
+    overviewPrompt.value = '';
+    tasks.value = [];
+    logs.value = [];
+    finalResult.value = null;
     return;
   }
   try {
-    const response = await apiClient.delete(`/agent`, {params: {conversation_id: conversationId.value}});
-    if (response && response.data?.status === 'success') {
-      showInfo(response.data.message)
-    } else {
-      showError(new Error('清空聊天记录失败'));
-    }
-    const removedId = Number(response?.data?.conversation_id ?? conversationId.value);
-    if (!Number.isNaN(removedId)) {
-      conversationStore.removeConversationById(removedId);
-      conversations.value = (conversations.value || []).filter(c => Number(c.id) !== removedId);
-      if (Number(conversationId.value) === removedId) {
-        conversationId.value = null;
-        currentConversation.value = null;
-        messages.value = [];
-      }
-    }
-    // reload list and open latest (or none)
-    await loadConversations();
-    const convs = conversations.value || [];
-    if (convs.length) {
-      await openConversation(convs[0].id);
+    await apiClient.delete(`/mapcoder/session/${conversationId.value}`);
+    showInfo('任务已删除');
+    conversationStore.removeConversationById(conversationId.value);
+    conversations.value = (conversations.value || []).filter(c => Number(c.id) !== Number(conversationId.value));
+    if (conversations.value.length) {
+      await openConversation(conversations.value[0].id);
     } else {
       conversationId.value = null;
       currentConversation.value = null;
-      messages.value = [];
+      overviewPrompt.value = '';
+      tasks.value = [];
+      logs.value = [];
+      finalResult.value = null;
     }
-    const uid = authStore.user?.id;
-    if (uid) localStorage.removeItem(draftKey(uid));
   } catch (e) {
-    console.error('Failed to clear conversation', e);
+    console.error('Failed to clear session', e);
   }
 }
 
@@ -372,47 +553,24 @@ const hasDraft = computed(() => {
 });
 
 // Confirmation modal state for clearing chat
-const showClearConfirm = ref(false);
-const confirmDialogRef = ref(null);
+// const showClearConfirm = ref(false);
+// const confirmDialogRef = ref(null);
 
 function onClickClear() {
-  // open the confirmation dialog instead of clearing immediately
-  showClearConfirm.value = true;
-  nextTick(() => {
-    try {
-      confirmDialogRef.value && confirmDialogRef.value.focus();
-    } catch (e) {}
-  });
-}
-
-async function confirmClear() {
+  // directly clear without modal for now
   if (clearing.value) return;
   clearing.value = true;
-  try {
-    await clearChat();
-    showClearConfirm.value = false;
-  } catch (e) {
-    console.error('clearChat failed', e);
-  } finally {
-    clearing.value = false;
-  }
+  clearChat().finally(() => { clearing.value = false; });
 }
 
-function cancelClear() {
-  showClearConfirm.value = false;
-}
-
-const route = useRoute();
+// remove confirmClear and cancelClear functions entirely
 
 onMounted(async () => {
-  // If the sidebar navigated with a conversation_id query param, open that conversation;
-  // otherwise load the conversation list and default current conversation.
-  const q = route.query?.conversation_id;
+  const q = route.query?.session_id;
   if (q) {
     const id = parseInt(Array.isArray(q) ? q[0] : q);
     if (!isNaN(id)) {
       await openConversation(id);
-      // still reload the conversation list in background
       loadConversations();
     } else {
       await loadConversations();
@@ -423,462 +581,603 @@ onMounted(async () => {
   nextTick(() => adjustTextareaHeight());
 });
 
-// react to route query changes (when user clicks conversation in sidebar)
-watch(() => route.query?.conversation_id, async (val, oldVal) => {
+// Fix watch signature to remove unused oldVal
+watch(() => route.query?.session_id, async (val) => {
   if (!val) return;
   const id = parseInt(Array.isArray(val) ? val[0] : val);
   if (!isNaN(id) && id !== conversationId.value) {
     await openConversation(id);
   }
 });
+
+// 替换 runSession：先创建 Session（带 prompt），再运行
+async function runSession() {
+  if (!conversationId.value) return;
+  const prompt = (overviewPrompt.value || '').trim();
+  if (!prompt) return;
+  try {
+    running.value = true;
+    runProgress.value = 'Scheduling...';
+    const createRes = await apiClient.post(`/mapcoder/session`, {
+      title: currentConversation.value?.title || undefined,
+      model_id: modelId.value,
+      prompt
+    });
+    const sess = createRes.data || {};
+    if (!sess || !sess.id) {
+      throw new Error('创建任务会话失败');
+    }
+    conversationId.value = sess.id;
+    currentSessionId.value = sess.id;
+    currentConversation.value = {
+      id: sess.id,
+      title: sess.title || (currentConversation.value?.title || `任务 ${sess.id}`),
+      created_at: sess.created_at || new Date().toISOString()
+    };
+    finalResult.value = null;
+    tasks.value = [];
+    logs.value = [];
+    sessionStatus.value = sess.status || 'pending';
+    await apiClient.post(`/mapcoder/session/${sess.id}/run`);
+    runProgress.value = 'Running';
+    await openSession(sess.id);
+    const poll = async () => {
+      const sid = currentSessionId.value;
+      if (!sid) return;
+      try {
+        const res = await apiClient.get(`/mapcoder/session/${sid}/status`);
+        const s = res.data?.session || {};
+        runProgress.value = s.status || '';
+        if (Array.isArray(res.data?.recent_logs)) {
+          logs.value = (res.data.recent_logs || []).slice().reverse();
+        }
+        if (Array.isArray(res.data?.active_tasks)) {
+          tasks.value = res.data.active_tasks || [];
+        }
+        if (['completed','failed','canceled'].includes((s.status || '').toLowerCase())) {
+          stopPolling();
+          running.value = false;
+          await openSession(sid);
+        } else {
+          running.value = true;
+        }
+      } catch (e) { /* ignore */ }
+    };
+    await poll();
+    stopPolling();
+    pollTimer = setInterval(poll, 1500);
+  } catch (e) {
+    showError(new Error('启动任务失败'));
+    running.value = false;
+    runProgress.value = '';
+  }
+}
+
+async function stopSession() {
+  try {
+    const sid = currentSessionId.value;
+    if (!sid) return;
+    await apiClient.post(`/mapcoder/session/${sid}/stop`);
+    runProgress.value = 'canceled';
+    running.value = false;
+    stopSSE();
+    stopFallbackPolling();
+    sseStatus.value = 'idle';
+    currentSessionId.value = null;
+    sessionStatus.value = 'canceled';
+    await openSession(sid);
+  } catch (e) {
+    showError(new Error('停止任务失败'));
+  }
+}
+
+function hasResult(task) {
+  if (!task) return false;
+  const res = task.result || {};
+  return Boolean(res.code || res.text || res.output);
+}
+function downloadBack(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const name = filename.replace(/\s+/g, '_');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+function downloadFinalResult() {
+  const fr = finalResult.value;
+  if (!fr) return;
+  const content = fr.code || fr.text || JSON.stringify(fr, null, 2);
+  downloadBack(content, `${(fr.title || currentConversation.value?.title || 'final_result').replace(/\s+/g, '_')}.txt`);
+}
+function downloadTaskResult(t) {
+  if (!t) return;
+  const text = taskResultText(t);
+  if (!text) return;
+  const name = (t.title || 'task_result').replace(/\s+/g, '_');
+  downloadBack(text, `${name}.txt`);
+}
+function copyTaskResult(t) {
+  copyToClipboard(taskResultText(t));
+}
+
+// Add a helper to compute role color class (optional)
+function roleColor(roleId) {
+  // simple mapping by role name or id; roleId could be string or number
+  const r = String(roleId || '').toLowerCase();
+  if (r.includes('retriever') || r.includes('retrieve') || r === '1') return 'role-retriever';
+  if (r.includes('planner') || r === '2') return 'role-planner';
+  if (r.includes('coder') || r === '3') return 'role-coder';
+  if (r.includes('debugger') || r === '4') return 'role-debugger';
+  return 'role-default';
+}
+
+function getRoleName(roleId) {
+  const r = String(roleId || '').toLowerCase();
+  if (r.includes('retriever') || r.includes('retrieve') || r === '1') return 'retriever';
+  if (r.includes('planner') || r === '2') return 'planner';
+  if (r.includes('coder') || r === '3') return 'coder';
+  if (r.includes('debugger') || r === '4') return 'debugger';
+  return 'assistant';
+}
+
+// Update copyToClipboard to accept strings or objects (already handles strings)
+
+onUnmounted(() => {
+  stopPolling();
+  stopSSE();
+});
+
+// Add helpers that were missing
+function highlightCode(code) {
+  try {
+    const lang = (code && code.includes('class') && code.includes('public')) ? 'java' : 'plaintext';
+    const res = hljs.highlight(code || '', {language: lang, ignoreIllegals: true});
+    return res.value;
+  } catch (e) {
+    return (code || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+}
+
+function formatMessage(text) {
+  // minimal markdown renderer using MarkdownIt already instantiated as md
+  try {
+    return md.render(text || '');
+  } catch (e) {
+    return (text || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(String(text || ''));
+    showInfo('已复制到剪贴板');
+  } catch (e) {
+    showError(new Error('复制失败'));
+  }
+}
+
+// Handle incoming SSE payloads (status/log/task/message updates)
+function handleSSEEvent(payload) {
+  if (!payload || typeof payload !== 'object') return;
+  const type = payload.type || payload.event || '';
+  if (payload.final_result) {
+    finalResult.value = payload.final_result;
+    activeTab.value = 'overview';
+  }
+  if (payload.session) {
+    const s = payload.session;
+    if (s.title) currentConversation.value = { ...(currentConversation.value || {}), title: s.title, id: s.id };
+    if (s.status) sessionStatus.value = s.status;
+    const statusLower = (s.status || '').toLowerCase();
+    if (sessionActiveStatuses.includes(statusLower)) {
+      running.value = true;
+    }
+    if (s.status === 'completed' || s.status === 'failed' || s.status === 'canceled') {
+      running.value = false;
+      runProgress.value = s.status;
+      stopPolling();
+      stopSSE();
+      stopFallbackPolling();
+      sseStatus.value = 'idle';
+    }
+  }
+  if (Array.isArray(payload.tasks)) applyTasks(payload.tasks);
+  if (payload.task) {
+    const id = Number(payload.task.id);
+    const next = [...tasks.value];
+    const idx = next.findIndex(t => Number(t.id) === id);
+    if (idx >= 0) next.splice(idx, 1, payload.task);
+    else next.push(payload.task);
+    applyTasks(next);
+  }
+  if (Array.isArray(payload.logs)) {
+    const existingIds = new Set(logs.value.map(l => Number(l.id)));
+    payload.logs.forEach(l => { if (!existingIds.has(Number(l.id))) logs.value.push(l); });
+  }
+  if (payload.log) {
+    const id = Number(payload.log.id);
+    if (!logs.value.some(l => Number(l.id) === id)) logs.value.push(payload.log);
+  }
+}
+
+// New helper to refresh tasks when Tasks tab selected so user can see progress even without SSE
+async function refreshTasksPanel(force = false) {
+  const sid = conversationId.value;
+  if (!sid) return;
+  if (!force && lastTasksRefreshSessionId === sid && tasks.value?.length) return;
+  try {
+    const res = await apiClient.get(`/mapcoder/session/${sid}`);
+    const payload = res.data || {};
+    tasks.value = payload.tasks || [];
+    if (Array.isArray(payload.logs)) {
+      logs.value = payload.logs;
+    }
+    if (payload.final_result) {
+      finalResult.value = payload.final_result;
+    }
+    sessionStatus.value = payload.status || sessionStatus.value;
+    lastTasksRefreshSessionId = sid;
+  } catch (e) {
+    console.warn('刷新任务面板失败', e);
+  }
+}
+
+watch(activeTab, (tab) => {
+  if (tab === 'tasks') {
+    refreshTasksPanel(true);
+  }
+});
+
+function isTaskCollapsed(id) {
+  return collapsedTasks.value.has(Number(id));
+}
+
+function toggleTaskCollapse(id) {
+  const nid = Number(id);
+  const next = new Set(collapsedTasks.value);
+  if (next.has(nid)) next.delete(nid); else next.add(nid);
+  collapsedTasks.value = next;
+}
+
+function truncatedTaskResult(task, limit = 100) {
+  const text = taskResultText(task) || '';
+  if (text.length <= limit) return text;
+  return text.slice(0, limit) + '…';
+}
+
 </script>
 
 <style scoped>
-.ai-chat-page {
-  display: flex;
-  background: transparent; /* light bg */
-  color: #111827; /* light text */
+:root {
+  --btn-primary-start: #4f7df3;
+  --btn-primary-end: #5888ff;
+  --btn-accent-start: #1e53ff;
+  --btn-accent-end: #2a84ec;
+  --btn-danger-start: #ff6b6b;
+  --btn-danger-end: #f2495e;
+  --btn-copy-start: #3b82f6;
+  --btn-copy-end: #5794ff;
+  --btn-download-start: #22c55e;
+  --btn-download-end: #2dd07f;
+  --btn-hover-shadow: rgba(79, 125, 243, 0.25);
 }
 
-.conversation-list {
-  width: 260px;
-  border-right: 1px solid rgba(0,0,0,0.06);
-  padding: 12px;
-  box-sizing: border-box;
+.ai-chat-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background-color: #f2f3f7;
+  color: #1f1f1f;
 }
-.list-header {
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-.list-controls {
-  margin-bottom: 8px;
-}
-.list-rows {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  max-height: 70vh;
-  overflow: auto;
-}
-.list-rows .row {
-  padding: 8px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.list-rows .row:hover { background: rgba(0,0,0,0.03); }
-.list-rows .row.active { background: rgba(37,99,235,0.06); }
-.row-title { font-weight: 600; }
-.row-sub { font-size: 12px; color: #6b7280; }
 
 .chat-area {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: transparent;
-  border-radius: 12px;
-  align-items: center;
+  overflow: hidden;
 }
 
 .chat-header {
-  padding: 16px;
   display: flex;
-  width: 80%;
-  align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  color: #111827; /* ensure header uses explicit text color */
+  align-items: center;
+  padding: 10px 20px;
+  background-color: #ffffff;
+  border-bottom: 1px solid #d9dfe7;
+}
+
+.title {
+  font-size: 18px;
+  font-weight: 500;
 }
 
 .header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
-}
-
-.chat-header .title {
-  color: #111827; /* explicit title color */
-  font-weight: 700;
-  font-size: 1.1rem;
-  letter-spacing: 1px;
 }
 
 .icon-btn {
   background: transparent;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  color: #111827; /* icon color */
-  padding: 8px;
-  border-radius: 8px;
+  border: none;
   cursor: pointer;
-  transition: all 0.15s ease;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 40px;
-  min-height: 40px;
+  padding: 8px;
+  margin-left: 10px;
+  border-radius: 50%;
+  color: #4f7df3;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
-
-.icon-btn:hover {
-  background: rgba(37, 99, 235, 0.06); /* icon hover */
-  color: #2563eb; /* primary */
-  border-color: transparent;
+.icon-btn:hover:not(:disabled) {
+  background: rgba(79, 125, 243, 0.2);
+  transform: translateY(-1px);
 }
-
 .icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.messages {
-  flex: 1;
-  overflow: auto;
-  padding: 20px;
-  background: transparent;
-  width: 70%;
-  box-sizing: border-box;
-  /* leave extra space at the bottom so floating footer doesn't overlap messages */
-  padding-bottom: calc(10vh + 180px);
-}
-
-/* Ensure the v-for wrapper for each message fills the container so inner .message justify-content works */
-.messages > div {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.message {
-  margin-bottom: 16px;
-  display: flex;
-  width: 100%;
-  font-size: 1rem;
-}
-
-.message.user {
-  justify-content: flex-end;
-}
-
-.message.user .bubble {
-  background: #e6f7ff;
-  color: #111827;
-  align-self: flex-end;
-  border-radius: 12px 12px 4px 12px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.message.assistant {
-  justify-content: flex-start;
-}
-
-.message.assistant .bubble {
-  background: transparent;
-  color: #111827;
-  border-radius: 12px 12px 12px 4px;
-}
-
-.bubble {
-  padding: 10px;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-}
-
-/* ensure markdown lists and code blocks fit inside bubble */
-.assistant-content ul,
-.assistant-content ol {
-  padding-left: 1.2em;
-  margin: 0 0 0.5em 0;
-  list-style-position: inside; /* put bullets/numbers inside the container to avoid overflow */
-}
-
-.assistant-content li {
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  hyphens: auto;
-}
-
-.assistant-content pre {
-  white-space: pre-wrap; /* allow long code lines to wrap */
-  overflow: auto;
-}
-
-.assistant-content code {
-  word-break: break-word;
-}
-
-.chat-input {
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  height: auto;
-  gap: 12px;
-  background: #ececf3;
-  position: fixed;
-  bottom: 3%;
-  border-radius: 30px;
-  width: 70%;
-  z-index: 60; /* float above other content */
-  box-shadow: 0 10px 30px rgba(2, 6, 23, 0.08);
-}
-
-.chat-input textarea {
-  flex: 1;
-  resize: none;
-  padding: 12px 60px 12px 12px;
-  background: transparent;
-  transition: all 0.2s ease;
-  min-height: calc(1.2rem * 3);
-  max-height: calc(1.2rem * 10);
-  overflow-y: hidden;
-  font-size: 1rem;
-  border: transparent;
-}
-
-.chat-input textarea:focus {
-  outline: none;
-}
-
-.dark-theme .chat-input textarea {
-  background: #212121 !important;
-  color: #e6eef8;
-}
-
-/* New toggle controls styles */
-.controls {
-  display: flex;
-  align-items: flex-end;
-  gap: 20px;
-  margin-top: 12px;
-}
-
-.model-select {
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid #111827;
-  background: transparent;
-  color: #0b3080;
-  font-size: 0.9rem;
-}
-.dark-theme .model-select {
-  color: #5b68f5;
-  border-color: #5b68f5;
-}
-
-.model-select:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
-}
-
-.toggle-btn {
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid #111827;
-  background: transparent;
-  color: #afafaf;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.12s ease;
-  width: fit-content;
-}
-
-.toggle-btn.enabled {
-  border-color: #123a96;
-  color: #0b3080;
-}
-
-.toggle-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.dark-theme .toggle-btn {
-  border-color: #93989d;
-  color: #b8bfc7;
-}
-
-.dark-theme .toggle-btn.enabled {
-  /* keep enabled color as sky-blue in dark mode */
-  border-color: #5b68f5;
-  color: #5b68f5;
-}
-
-.dark-theme .chat-input {
-  background: #212121 !important;
-  color: #e6eef8;
-}
-
-
-.send-icon {
-  position: absolute;
-  right: 22px;
-  bottom: 22px;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 12px;
-  background: #467cf1;
-  color: #ffffff;
-  cursor: pointer;
-  transition: all 0.15s ease;
-  box-shadow: 0 6px 18px rgba(37, 99, 235, 0.12);
-}
-
-.send-icon:hover {
-  opacity: 0.95;
-  background: #2563eb;
-  transform: translateY(-1px);
-}
-
-.dark-theme .send-icon:hover {
-  background: #5787f5;
-}
-
-.send-icon.disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  box-shadow: none;
-}
-
-.send-icon:disabled {
-  cursor: not-allowed;
-}
-
-.icon-btn svg, .send-icon svg {
-  width: 18px;
-  height: 18px;
-  display: block;
-  color: inherit;
-  fill: currentColor;
-  stroke: currentColor;
-}
-
 .draft {
-  margin-left: 12px;
-  color: #6b7280;
-  font-size: 0.9rem;
-}
-
-.message .status {
-  font-size: 12px;
-  color: #6b7280;
-  margin-top: 6px;
-}
-
-/* DARK styles applied when root has .is-dark class */
-.dark-theme .ai-chat-page {
-  background: #0b1220;
-  color: #e6eef8;
-}
-
-.dark-theme .chat-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  color: #e6eef8;
-}
-
-.dark-theme .chat-header .title {
-  color: #e6eef8;
-}
-
-.dark-theme .icon-btn {
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  color: #e6eef8;
-}
-
-.dark-theme .icon-btn:hover {
-  background: rgba(59, 130, 246, 0.08);
-  color: #3b82f6;
-}
-
-.dark-theme .message.user .bubble {
-  background: #013241;
-  color: #e6eef8;
-}
-
-.dark-theme .message.assistant .bubble {
-  color: #e6eef8;
-}
-
-.dark-theme .send-icon {
-  background: #3b82f6;
-  color: #ffffff;
-  box-shadow: 0 6px 18px rgba(59, 130, 246, 0.12);
-}
-
-.dark-theme .draft {
-  color: #9ca3af;
-}
-
-.dark-theme .message .status {
-  color: #9ca3af;
-}
-
-/* Confirm dialog styles */
-.confirm-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-
-.confirm-dialog {
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 24px;
-  max-width: 400px;
-  width: 90%;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
-}
-.dark-theme .confirm-dialog {
-  background: #0b1320;
-  color: #e6eef8;
-}
-
-.confirm-body {
-  font-size: 1rem;
-  margin-bottom: 24px;
-  color: #374151;
-}
-.dark-theme .confirm-body {
-  background: #0b1320;
-  color: #e6eef8;
-}
-
-.confirm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-.dark-theme .confirm-actions {
-  color: #e6eef8;
+  color: #28a745;
+  margin-left: 10px;
 }
 
 .btn {
-  padding: 10px 16px;
-  border-radius: 8px;
+  padding: 8px 14px;
+  margin-left: 10px;
   border: none;
+  border-radius: 6px;
   cursor: pointer;
-  font-size: 0.9rem;
-  transition: all 0.15s ease;
+  background: linear-gradient(90deg, var(--btn-primary-start), var(--btn-primary-end));
+  color: #fff;
+  font-weight: 500;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.btn-confirm {
-  background: #2563eb;
-  color: #ffffff;
-}
-.dark-theme .btn-confirm {
-  background: #5787f5;
-  color: #ffffff;
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(79, 125, 243, 0.25);
 }
 
-.btn-confirm:hover {
-  background: #1d4ed8;
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
-.dark-theme .btn-confirm:hover {
-  background: #5686ef !important;
+
+.run-btn {
+  background: linear-gradient(90deg, var(--btn-accent-start), var(--btn-accent-end));
+}
+.run-btn:hover {
+  background: linear-gradient(90deg, var(--btn-accent-start), var(--btn-accent-end));
+}
+
+
+.stop-btn {
+  background: linear-gradient(90deg, var(--btn-danger-start), var(--btn-danger-end));
+}
+
+.run-progress {
+  margin-left: 10px;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #d9dfe7;
+  background: #f6f8fb;
+}
+
+.tab {
+  flex: 1;
+  padding: 12px 0;
+  text-align: center;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: #798598;
+  font-weight: 600;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.tab:hover {
+  background: rgba(79, 125, 243, 0.1);
+}
+
+.tab.active {
+  background-color: #ffffff;
+  color: #1e2a44;
+  box-shadow: inset 0 -2px 0 #4f7df3;
+}
+
+.panel {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.overview-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.prompt-card {
+  background-color: #fff;
+  border: 1px solid #dfe3eb;
+  border-radius: 6px;
+  padding: 15px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+.prompt-label {
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.prompt-textarea {
+  width: 100%;
+  border: 1px solid #cfd6e4;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 14px;
+  resize: none;
+  color: #1f1f1f;
+}
+
+.prompt-help {
+  font-size: 12px;
+  color: #6c757d;
+  margin-top: 5px;
+}
+
+.final-result {
+  background-color: #fff;
+  border: 1px solid #dfe3eb;
+  border-radius: 6px;
+  padding: 15px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
+}
+
+.artifact-meta {
+  font-size: 12px;
+  color: #6c757d;
+  margin-bottom: 10px;
+}
+
+.code-actions {
+  margin-bottom: 10px;
+}
+
+.code-block {
+  background-color: #0f172a;
+  color: #f8fafc;
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+
+.task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.task-item {
+  background-color: #fff;
+  border: 1px solid #dfe3eb;
+  border-radius: 8px;
+  padding: 15px;
+  margin-bottom: 12px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.task-item:hover {
+  border-color: #c3ccdd;
+  transform: translateY(-1px);
+}
+
+.task-header {
+  cursor: pointer;
+}
+
+.task-title {
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-toggle {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: #dfe3eb;
+  display: inline-block;
+  position: relative;
+  transition: background 0.15s ease;
+}
+
+.task-toggle::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-right: 2px solid #4f5c74;
+  border-bottom: 2px solid #4f5c74;
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.task-toggle.collapsed::after {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.task-body {
+  margin-bottom: 10px;
+}
+
+.result {
+  font-size: 14px;
+  color: #333;
+}
+
+.collapsed-preview p {
+  margin: 6px 0 0;
+  color: #5c6579;
+}
+
+.task-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.btn-copy {
+  background: linear-gradient(90deg, var(--btn-copy-start), var(--btn-copy-end));
+  margin-right: 8px;
+}
+
+.btn-download {
+  background: linear-gradient(90deg, var(--btn-download-start), var(--btn-download-end));
+}
+
+.logs-panel {
+  background-color: #fff;
+  border: 1px solid #dfe3eb;
+  border-radius: 8px;
+  padding: 15px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+
+.log-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.log-item {
+  border-bottom: 1px solid #e1e1e6;
+  padding: 10px 0;
+}
+
+.log-meta {
+  font-size: 12px;
+  color: #6c757d;
+  margin-bottom: 5px;
+}
+
+.log-msg {
+  font-size: 14px;
+  color: #333;
+}
+
+.log-payload {
+  font-size: 12px;
+  color: #6c757d;
+  margin-top: 5px;
 }
 </style>
+

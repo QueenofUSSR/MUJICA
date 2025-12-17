@@ -223,7 +223,7 @@ const route = useRoute()
 const router = useRouter();
 
 const navigateToDashboard = () => {
-  router.push('/ai-chat');
+  router.push('/overview');
 };
 
 const isActive = (path) => {

@@ -3,16 +3,16 @@
   <div class="app-layout">
     <Siderbar v-if="isAuthedPage" ref="siderBar"/>
     <div
-      class="content-wrapper"
-      :style="{
+        class="content-wrapper"
+        :style="{
         marginLeft: isAuthedPage ? 'var(--sidebar-width)' : '0',
         paddingTop: '0',
         height: '100%'
       }"
     >
-      <router-view v-slot="{ Component }">
-        <component :is="Component" ref="currentComponent"/>
-      </router-view>
+    <router-view v-slot="{ Component }">
+      <component :is="Component" ref="currentComponent"/>
+    </router-view>
     </div>
     <ToastContainer/>
   </div>
@@ -93,6 +93,7 @@ body {
   background: linear-gradient(120deg, #f8f1f1 0%, #fadcb3 100%);
 
 }
+
 .dark-theme .app-layout {
   background: linear-gradient(120deg, #3e1617 0%, #1a1542 100%);
 }
