@@ -1,14 +1,15 @@
-import {createRouter, createWebHistory} from 'vue-router'
-import {useAuthStore} from '@/stores/authStore'
-import {pinia} from "../main";
+import { createRouter, createWebHistory } from 'vue-router'
+import { useAuthStore } from '@/stores/authStore'
+import { pinia } from "../main";
 import LoginView from "@/views/LoginView.vue";
 import ProfileView from "@/views/ProfileView.vue";
 import AIChatView from '@/views/AIChatView.vue';
+import MCPView from "@/views/MCPView.vue";
 
-const routes = [{path: '/login', component: LoginView}, {
+const routes = [{ path: '/login', component: LoginView }, {
     path: '/profile', component: ProfileView
 },
-{ path: '/overview', component: AIChatView }
+{ path: '/overview', component: AIChatView }, { path: '/mcp', component: MCPView }
 ]
 
 const router = createRouter({

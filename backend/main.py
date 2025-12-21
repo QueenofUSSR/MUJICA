@@ -30,3 +30,7 @@ app.include_router(auth.router)
 app.include_router(user.router)
 app.include_router(agent.router)
 app.include_router(mapcoder.router)
+
+from routers import mcp
+app.include_router(mcp.router)
+

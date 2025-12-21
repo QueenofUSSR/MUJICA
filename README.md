@@ -79,7 +79,3 @@ MIT License - 详见 `LICENSE` 文件。
 
 ---
 
-如果你希望我：
-- 把 README 改为全中文或英文版本，或
-- 直接替换 `backend/requirements.txt` 为精简/扩展版本（并安装/测试），
-请告诉我，我会继续执行并在修改后运行快速检查。
