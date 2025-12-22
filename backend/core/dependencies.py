@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 
 # PostgresSQL 配置
 DB_USER = "postgres"
-DB_PASSWORD = "123456"
+DB_PASSWORD = "kb121296"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 DB_NAME = "agent_db"
