@@ -13,4 +13,4 @@ python-jose
 python-multipart
 requests
 openai
-mcp
+mcp>=0.1.0

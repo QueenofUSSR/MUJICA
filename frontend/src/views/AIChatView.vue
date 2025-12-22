@@ -13,7 +13,8 @@
             <span v-else style="color: #0b0b49">运行任务</span>
           </button>
           <button class="btn stop-btn" v-if="canStopSession" @click="stopSession">停止</button>
-          <div v-if="runProgress" class="run-progress" :class="{'text-success': runProgress === '已完成' || runProgress==='completed', 'text-danger': runProgress === '失败' || runProgress==='failed'}">
+          <div v-if="runProgress" class="run-progress"
+               :class="{'text-success': runProgress === '已完成' || runProgress==='completed', 'text-danger': runProgress === '失败' || runProgress==='failed'}">
             {{ runProgress }}
           </div>
         </div>
@@ -31,7 +32,33 @@
           <!-- 任务需求输入 -->
           <div class="prompt-card">
             <label class="prompt-label">任务需求</label>
-            <textarea ref="inputEl" v-model="overviewPrompt" class="prompt-textarea" rows="4" placeholder="例如：请为我实现一个Java的快速排序，并附带简单测试用例" @input="onInput"></textarea>
+            <textarea ref="inputEl" v-model="overviewPrompt" class="prompt-textarea" rows="4"
+                      placeholder="例如：请为我实现一个Java的快速排序，并附带简单测试用例" @input="onInput"></textarea>
+            <div class="prompt-params">
+              <div class="param-field">
+                <label>模型</label>
+                <select v-model="llmParams.model_id">
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="gpt-4o-mini">gpt-4o-mini</option>
+                  <option value="gpt-4.1">gpt-4.1</option>
+                  <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                </select>
+              </div>
+              <div class="param-field">
+                <label>最大 Tokens</label>
+                <input type="number" min="256" max="4096" step="64" v-model.number="llmParams.max_tokens"
+                       placeholder="1024"/>
+              </div>
+              <div class="param-field">
+                <label>温度</label>
+                <input type="number" min="0" max="1" step="0.1" v-model.number="llmParams.temperature"
+                       placeholder="0.2"/>
+              </div>
+              <div class="param-field">
+                <label>API Key (可选)</label>
+                <input type="password" v-model="llmParams.api_key" placeholder="自定义临时 key"/>
+              </div>
+            </div>
             <div class="prompt-help">提示：填写后点击右上角“运行任务”，系统将按检索→规划→编码→调试的顺序逐步执行。</div>
           </div>
 
@@ -39,9 +66,12 @@
             <h3>最终产物</h3>
             <div v-if="finalResult">
               <div class="artifact-meta">来源: {{ finalResult.title || currentConversation?.title }}</div>
+              <div class="artifact-meta" v-if="savedLlmParamsText">
+                LLM 参数：{{ savedLlmParamsText }}
+              </div>
               <div v-if="finalResult.code">
                 <div class="code-actions">
-                  <button class="btn" @click="downloadFinalResult">下载</button>
+                  <button class="btn btn-download" @click="downloadFinalResult">下载</button>
                 </div>
                 <pre class="code-block hljs"><code v-html="highlightCode(finalResult.code)"></code></pre>
               </div>
@@ -117,7 +147,7 @@
 </template>
 
 <script setup>
-import {computed, nextTick, onMounted, ref, watch, onUnmounted} from 'vue';
+import {computed, nextTick, onMounted, onUnmounted, ref, watch} from 'vue';
 import {useRoute} from 'vue-router';
 import MarkdownIt from 'markdown-it';
 import hljs from 'highlight.js';
@@ -145,21 +175,29 @@ const conversationId = ref(null);
 const currentConversation = ref(null);
 const conversationStore = useConversationStore();
 const conversations = ref([]);
+const overviewPrompt = ref('');
 const messages = ref([]);
-const messagesEl = ref(null);
 const input = ref('');
 const inputEl = ref(null); // textarea ref
-const sending = ref(false);
 const clearing = ref(false);
 const modelId = ref('gpt-4o');
-// Add task prompt string to back the Overview textarea and template trim()
-const overviewPrompt = ref('');
-const draftKey = (id) => `ai_draft_user_${id}`;
+const llmParams = ref({
+  model_id: 'gpt-4o',
+  max_tokens: 1024,
+  temperature: 0.2,
+  api_key: ''
+});
+const savedLlmParams = ref(null);
+const savedLlmParamsText = computed(() => {
+  if (!savedLlmParams.value) return '';
+  const parts = [];
+  if (savedLlmParams.value.model_id) parts.push(`模型 ${savedLlmParams.value.model_id}`);
+  if (savedLlmParams.value.max_tokens) parts.push(`max_tokens=${savedLlmParams.value.max_tokens}`);
+  if (savedLlmParams.value.temperature !== undefined) parts.push(`temp=${savedLlmParams.value.temperature}`);
+  if (savedLlmParams.value.api_key) parts.push('自定义 key');
+  return parts.join(' · ');
+});
 const authStore = useAuthStore();
-const MIN_ROWS = 3;
-const MAX_ROWS = 10;
-
-// add route here so it's available to functions and watchers defined below
 const route = useRoute();
 
 // New multi-agent UI state
@@ -168,8 +206,8 @@ const finalResult = ref(null);
 const tasks = ref([]);
 const collapsedTasks = ref(new Set());
 const visibleTasks = computed(() => (tasks.value || [])
-  .filter(t => t && t.parent_id !== null && t.parent_id !== undefined)
-  .sort((a, b) => Number(a.id) - Number(b.id)));
+    .filter(t => t && t.parent_id !== null && t.parent_id !== undefined)
+    .sort((a, b) => Number(a.id) - Number(b.id)));
 const logs = ref([]);
 const sessionStatus = ref(''); // 'queued' | 'running' | 'completed' | 'failed' | ''
 const currentSessionId = ref(null);
@@ -180,7 +218,7 @@ async function loadConversations() {
   try {
     const token = authStore.accessToken;
     const url = token ? `/mapcoder/session?token=${encodeURIComponent(token)}` : '/mapcoder/session';
-    const res = await apiClient.get(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const res = await apiClient.get(url, {headers: token ? {Authorization: `Bearer ${token}`} : {}});
     const list = Array.isArray(res.data) ? res.data : [];
     list.sort((a, b) => Number(b.id) - Number(a.id));
     conversations.value = list;
@@ -208,11 +246,17 @@ function applyTasks(list) {
 // New UI state for run/polling and selected task
 const running = ref(false);
 const runProgress = ref('');
-const selectedTask = ref(null);
 let pollTimer = null;
 let fallbackTimer = null;
-let debugAttempted = false;
-const sessionActiveStatuses = ['pending','queued','running'];
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+const sessionActiveStatuses = ['pending', 'queued', 'running'];
 const isSessionActive = computed(() => {
   const status = (sessionStatus.value || '').toLowerCase();
   return !!currentSessionId.value && sessionActiveStatuses.includes(status);
@@ -222,53 +266,17 @@ const runDisabled = computed(() => {
   return promptEmpty || !conversationId.value || running.value || isSessionActive.value;
 });
 const canStopSession = computed(() => isSessionActive.value);
+
 function taskResultText(task) {
   if (!task) return '';
   const res = task.result || {};
   return res.code || res.text || res.output || task.plan || '';
 }
+
 // SSE (Server-Sent Events) subscription
 const sse = ref(null);
 const sseStatus = ref('idle'); // 'idle' | 'connecting' | 'connected' | 'fallback'
 let sseConnectTimer = null;
-let startSSEDebounceTimer = null;
-
-// helper to try debug SSE endpoint once
-function tryDebugSSE(sessionId) {
-  if (debugAttempted) return false;
-  debugAttempted = true;
-  try {
-    const base = apiClient.defaults.baseURL || '';
-    const token = authStore.accessToken;
-    const url = token ? `${base}/mapcoder/session/${sessionId}/debug-events?token=${encodeURIComponent(token)}` : `${base}/mapcoder/session/${sessionId}/debug-events`;
-    const esd = new EventSource(url);
-    let connected = false;
-    const t = setTimeout(() => {
-      if (!connected) {
-        try { esd.close(); } catch (e) {}
-      }
-    }, 4000);
-    esd.onopen = () => {
-      connected = true;
-      clearTimeout(t);
-      console.log('Debug SSE connected for session', sessionId);
-      sse.value = esd; // reuse sse variable so handlers work
-    };
-    esd.onmessage = (ev) => {
-      try {
-        const payload = JSON.parse(ev.data);
-        handleSSEEvent(payload);
-      } catch (e) {}
-    };
-    esd.onerror = (e) => {
-      console.warn('Debug SSE error', e);
-      try { esd.close(); } catch (err) {}
-    };
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
 
 function startSSE(sessionId) {
   stopSSE();
@@ -287,7 +295,8 @@ function startSSE(sessionId) {
       try {
         const payload = JSON.parse(ev.data);
         handleSSEEvent(payload);
-      } catch (e) {}
+      } catch (e) {
+      }
     };
     es.onerror = () => {
       stopSSE();
@@ -300,9 +309,15 @@ function startSSE(sessionId) {
 }
 
 function stopSSE() {
-  if (sseConnectTimer) { clearTimeout(sseConnectTimer); sseConnectTimer = null; }
+  if (sseConnectTimer) {
+    clearTimeout(sseConnectTimer);
+    sseConnectTimer = null;
+  }
   if (sse.value) {
-    try { sse.value.close(); } catch (e) {}
+    try {
+      sse.value.close();
+    } catch (e) {
+    }
     sse.value = null;
   }
   // 不改变 sseStatus，这由上层流程来设置
@@ -318,7 +333,9 @@ async function fetchSessionStatus(sessionId) {
       const recent = (data.recent_logs || []).slice().reverse();
       // prepend new logs not already present (by id)
       const existingIds = new Set(logs.value.map(l => Number(l.id)));
-      recent.forEach(l => { if (!existingIds.has(Number(l.id))) logs.value.push(l); });
+      recent.forEach(l => {
+        if (!existingIds.has(Number(l.id))) logs.value.push(l);
+      });
     }
     if (Array.isArray(data.active_tasks)) {
       // replace tasks list with active tasks for simplicity
@@ -366,8 +383,21 @@ async function openConversation(id) {
     const res = await apiClient.get(`/mapcoder/session/${id}`);
     const payload = res.data || {};
     conversationId.value = payload.id || id;
-    currentConversation.value = { id: conversationId.value, title: payload.title || (`任务 ${conversationId.value}`), created_at: payload.created_at };
+    currentConversation.value = {
+      id: conversationId.value,
+      title: payload.title || (`任务 ${conversationId.value}`),
+      created_at: payload.created_at
+    };
     overviewPrompt.value = (payload.metadata?.prompt) || '';
+    if (payload.metadata?.llm_params) {
+      savedLlmParams.value = payload.metadata.llm_params;
+      llmParams.value = {
+        model_id: payload.model_id || llmParams.value.model_id,
+        max_tokens: payload.metadata.llm_params.max_tokens ?? llmParams.value.max_tokens,
+        temperature: payload.metadata.llm_params.temperature ?? llmParams.value.temperature,
+        api_key: payload.metadata.llm_params.api_key || ''
+      };
+    }
     finalResult.value = payload.final_result || null;
     tasks.value = payload.tasks || [];
     logs.value = payload.logs || [];
@@ -385,7 +415,14 @@ async function openSession(sessionId) {
     const payload = res.data || {};
     currentSessionId.value = payload.id || sessionId;
     conversationId.value = payload.conversation_id || conversationId.value;
-    currentConversation.value = { id: conversationId.value, title: payload.title || currentConversation.value?.title, created_at: payload.created_at };
+    currentConversation.value = {
+      id: conversationId.value,
+      title: payload.title || currentConversation.value?.title,
+      created_at: payload.created_at
+    };
+    if (payload.metadata?.llm_params) {
+      savedLlmParams.value = payload.metadata.llm_params;
+    }
     messages.value = Array.isArray(payload.messages) ? payload.messages : messages.value;
     finalResult.value = payload.final_result || null;
     tasks.value = payload.tasks || [];
@@ -422,91 +459,6 @@ watch(() => route.query?.session_id, async (val) => {
   }
 });
 
-// existing onSend remains almost unchanged, kept for streaming behavior
-async function onSend() {
-  const text = input.value.trim();
-  if (!text) return;
-  input.value = '';
-  const uid = authStore.user?.id;
-  if (uid) localStorage.removeItem(draftKey(uid));
-  await nextTick(() => adjustTextareaHeight());
-  sending.value = true;
-  try {
-    const userMsg = {id: 'tmp-' + Date.now(), role: 'user', content: text, status: '已完成'};
-    const assistantMsg = {
-      id: 'tmp-assistant-' + Date.now(),
-      role: 'assistant',
-      content: '',
-      status: '思考中...',
-      streaming: true,
-      streamingBuffer: '',
-      flushTimer: null
-    };
-    messages.value.push(userMsg);
-    messages.value.push(assistantMsg);
-    scrollMessages();
-
-    const body = { text: text, model_id: modelId.value };
-    if (conversationId.value) body.conversation_id = conversationId.value;
-
-    const response = await fetch('http://localhost:8000/agent', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${authStore.accessToken}`
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => response.statusText || '请求失败');
-      assistantMsg.streaming = false;
-      assistantMsg.status = '调用模型失败';
-      assistantMsg.content = '';
-      sending.value = false;
-      showError(new Error(`模型调用失败: ${errText}`));
-      await loadConversations();
-      if (conversationId.value) {
-        await openConversation(conversationId.value);
-      }
-      return;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    assistantMsg.status = '输出中...';
-    assistantMsg.streaming = false;
-    let accumulatedText = '';
-    try {
-      while (true) {
-        const {done, value} = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, {stream: true});
-        accumulatedText += chunk;
-        assistantMsg.content = accumulatedText;
-        scrollMessages();
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
-      assistantMsg.streaming = false;
-      assistantMsg.status = '已完成';
-      assistantMsg.updated_at = new Date().toISOString();
-    } finally {
-      reader.releaseLock();
-    }
-
-    // reload conversation to get persisted messages, tasks, logs and final_result
-    await loadConversations();
-    if (conversationId.value) {
-      await openConversation(conversationId.value);
-    }
-
-    scrollMessages();
-    sending.value = false;
-  } catch (e) {
-    console.error('发送消息失败:', e);
-    sending.value = false;
-  }
-}
 
 async function clearChat() {
   if (!conversationId.value) {
@@ -560,7 +512,9 @@ function onClickClear() {
   // directly clear without modal for now
   if (clearing.value) return;
   clearing.value = true;
-  clearChat().finally(() => { clearing.value = false; });
+  clearChat().finally(() => {
+    clearing.value = false;
+  });
 }
 
 // remove confirmClear and cancelClear functions entirely
@@ -598,11 +552,15 @@ async function runSession() {
   try {
     running.value = true;
     runProgress.value = 'Scheduling...';
-    const createRes = await apiClient.post(`/mapcoder/session`, {
+    const payload = {
       title: currentConversation.value?.title || undefined,
-      model_id: modelId.value,
-      prompt
-    });
+      model_id: llmParams.value.model_id || modelId.value,
+      prompt,
+      max_tokens: llmParams.value.max_tokens,
+      temperature: llmParams.value.temperature,
+      api_key: llmParams.value.api_key || undefined
+    };
+    const createRes = await apiClient.post(`/mapcoder/session`, payload);
     const sess = createRes.data || {};
     if (!sess || !sess.id) {
       throw new Error('创建任务会话失败');
@@ -614,11 +572,18 @@ async function runSession() {
       title: sess.title || (currentConversation.value?.title || `任务 ${sess.id}`),
       created_at: sess.created_at || new Date().toISOString()
     };
+    savedLlmParams.value = sess.metadata?.llm_params || payload;
     finalResult.value = null;
     tasks.value = [];
     logs.value = [];
     sessionStatus.value = sess.status || 'pending';
-    await apiClient.post(`/mapcoder/session/${sess.id}/run`);
+    await apiClient.post(`/mapcoder/session/${sess.id}/run`, {
+      prompt,
+      title: payload.title,
+      max_tokens: payload.max_tokens,
+      temperature: payload.temperature,
+      api_key: payload.api_key
+    });
     runProgress.value = 'Running';
     await openSession(sess.id);
     const poll = async () => {
@@ -634,14 +599,15 @@ async function runSession() {
         if (Array.isArray(res.data?.active_tasks)) {
           tasks.value = res.data.active_tasks || [];
         }
-        if (['completed','failed','canceled'].includes((s.status || '').toLowerCase())) {
+        if (['completed', 'failed', 'canceled'].includes((s.status || '').toLowerCase())) {
           stopPolling();
           running.value = false;
           await openSession(sid);
         } else {
           running.value = true;
         }
-      } catch (e) { /* ignore */ }
+      } catch (e) { /* ignore */
+      }
     };
     await poll();
     stopPolling();
@@ -671,11 +637,6 @@ async function stopSession() {
   }
 }
 
-function hasResult(task) {
-  if (!task) return false;
-  const res = task.result || {};
-  return Boolean(res.code || res.text || res.output);
-}
 function downloadBack(content, filename) {
   const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -688,12 +649,31 @@ function downloadBack(content, filename) {
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+function inferFileExtension(text, declaredLang) {
+  const lang = (declaredLang || '').toLowerCase();
+  const sample = (text || '').slice(0, 800).toLowerCase();
+  if (lang.includes('python') || sample.includes('import ') && sample.includes('def ')) return '.py';
+  if (lang.includes('java') || sample.includes('public class') || sample.includes('static void main')) return '.java';
+  if (lang.includes('c++') || lang.includes('cpp') || sample.includes('#include <')) return '.cpp';
+  if (lang.includes('javascript') || lang.includes('js') || sample.includes('function ') || sample.includes('const ')) return '.js';
+  if (lang.includes('typescript') || lang.includes('ts') || sample.includes('interface ') && sample.includes('export ')) return '.ts';
+  if (lang.includes('go ') || lang === 'go' || sample.includes('package main')) return '.go';
+  if (lang.includes('c#') || lang.includes('csharp') || sample.includes('namespace ') && sample.includes('class ')) return '.cs';
+  if (lang.includes('php') || sample.includes('<?php')) return '.php';
+  if (lang.includes('ruby') || sample.includes('def ') && sample.includes('end')) return '.rb';
+  if (lang.includes('kotlin') || sample.includes('fun main(')) return '.kt';
+  return '.txt';
+}
+
 function downloadFinalResult() {
   const fr = finalResult.value;
   if (!fr) return;
   const content = fr.code || fr.text || JSON.stringify(fr, null, 2);
-  downloadBack(content, `${(fr.title || currentConversation.value?.title || 'final_result').replace(/\s+/g, '_')}.txt`);
+  const ext = inferFileExtension(content, fr.language || fr.lang || fr.meta?.language);
+  downloadBack(content, `result${ext}`);
 }
+
 function downloadTaskResult(t) {
   if (!t) return;
   const text = taskResultText(t);
@@ -701,6 +681,7 @@ function downloadTaskResult(t) {
   const name = (t.title || 'task_result').replace(/\s+/g, '_');
   downloadBack(text, `${name}.txt`);
 }
+
 function copyTaskResult(t) {
   copyToClipboard(taskResultText(t));
 }
@@ -739,7 +720,7 @@ function highlightCode(code) {
     const res = hljs.highlight(code || '', {language: lang, ignoreIllegals: true});
     return res.value;
   } catch (e) {
-    return (code || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    return (code || '').replace(/[&<>]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
   }
 }
 
@@ -748,7 +729,7 @@ function formatMessage(text) {
   try {
     return md.render(text || '');
   } catch (e) {
-    return (text || '').replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    return (text || '').replace(/[&<>]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
   }
 }
 
@@ -764,14 +745,13 @@ async function copyToClipboard(text) {
 // Handle incoming SSE payloads (status/log/task/message updates)
 function handleSSEEvent(payload) {
   if (!payload || typeof payload !== 'object') return;
-  const type = payload.type || payload.event || '';
   if (payload.final_result) {
     finalResult.value = payload.final_result;
     activeTab.value = 'overview';
   }
   if (payload.session) {
     const s = payload.session;
-    if (s.title) currentConversation.value = { ...(currentConversation.value || {}), title: s.title, id: s.id };
+    if (s.title) currentConversation.value = {...(currentConversation.value || {}), title: s.title, id: s.id};
     if (s.status) sessionStatus.value = s.status;
     const statusLower = (s.status || '').toLowerCase();
     if (sessionActiveStatuses.includes(statusLower)) {
@@ -797,7 +777,9 @@ function handleSSEEvent(payload) {
   }
   if (Array.isArray(payload.logs)) {
     const existingIds = new Set(logs.value.map(l => Number(l.id)));
-    payload.logs.forEach(l => { if (!existingIds.has(Number(l.id))) logs.value.push(l); });
+    payload.logs.forEach(l => {
+      if (!existingIds.has(Number(l.id))) logs.value.push(l);
+    });
   }
   if (payload.log) {
     const id = Number(payload.log.id);
@@ -911,10 +893,12 @@ function truncatedTaskResult(task, limit = 100) {
   color: #4f7df3;
   transition: background 0.15s ease, transform 0.15s ease;
 }
+
 .icon-btn:hover:not(:disabled) {
   background: rgba(79, 125, 243, 0.2);
   transform: translateY(-1px);
 }
+
 .icon-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -935,6 +919,12 @@ function truncatedTaskResult(task, limit = 100) {
   color: #fff;
   font-weight: 500;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  max-width: 220px;
+  white-space: nowrap;
 }
 
 .btn:hover:not(:disabled) {
@@ -948,15 +938,16 @@ function truncatedTaskResult(task, limit = 100) {
 }
 
 .run-btn {
-  background: linear-gradient(90deg, var(--btn-accent-start), var(--btn-accent-end));
+  background: #2a84ec;
 }
+
 .run-btn:hover {
-  background: linear-gradient(90deg, var(--btn-accent-start), var(--btn-accent-end));
+  background: #1b6dcc;
 }
 
 
 .stop-btn {
-  background: linear-gradient(90deg, var(--btn-danger-start), var(--btn-danger-end));
+  background: #fa0636;
 }
 
 .run-progress {
@@ -1022,7 +1013,9 @@ function truncatedTaskResult(task, limit = 100) {
   border-radius: 6px;
   padding: 10px;
   font-size: 14px;
-  resize: none;
+  resize: vertical;
+  min-height: 120px;
+  max-height: 280px;
   color: #1f1f1f;
 }
 
@@ -1133,15 +1126,21 @@ function truncatedTaskResult(task, limit = 100) {
 .task-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 16px;
+}
+
+.task-actions .btn {
+  margin-left: 0;
+  min-width: 95px;
 }
 
 .btn-copy {
-  background: linear-gradient(90deg, var(--btn-copy-start), var(--btn-copy-end));
+  background: #0b0b49;
   margin-right: 8px;
 }
 
 .btn-download {
-  background: linear-gradient(90deg, var(--btn-download-start), var(--btn-download-end));
+  background: #2f2f2f;
 }
 
 .logs-panel {
@@ -1178,6 +1177,35 @@ function truncatedTaskResult(task, limit = 100) {
   font-size: 12px;
   color: #6c757d;
   margin-top: 5px;
+}
+
+.prompt-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.param-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 140px;
+  flex: 1 1 200px;
+}
+
+.param-field label {
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.param-field select,
+.param-field input {
+  border: 1px solid rgba(148, 163, 184, 0.6);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f5f6fb;
+  color: #111827;
 }
 </style>
 

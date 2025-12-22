@@ -20,10 +20,10 @@ const publicRoutes = ['/login', '/docs']
 
 // 路由守卫 - 保护需要认证的路由
 router.beforeEach((to, from, next) => {
-    const authStore = useAuthStore(pinia);
     if (to.path === '' || publicRoutes.includes(to.path)) {
         return next();
     }
+    const authStore = useAuthStore(pinia);
     if (!authStore.isAuthenticated) {
         return next('/login');
     }

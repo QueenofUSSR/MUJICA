@@ -172,12 +172,18 @@ async def create_session(
     prompt = (body.prompt or '').strip() or None
 
     coord = CoordinatorService(db)
+    llm_params = {
+        "max_tokens": body.max_tokens,
+        "temperature": body.temperature,
+        "api_key": body.api_key,
+    }
     session = await coord.create_session(
         user_id=user.id,
         title=body.title or f"任务 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}",
         model_id=body.model_id,
         prompt=prompt,
         role_configs=body.roles,
+        llm_params=llm_params,
     )
     return _session_to_detail(session, db)
 
@@ -302,6 +308,7 @@ async def run_session(
             extra = await request.json()
         except Exception:
             extra = None
+    llm_overrides = {}
     if extra and isinstance(extra, dict):
         new_prompt = (extra.get('prompt') or '').strip()
         if new_prompt:
@@ -315,6 +322,15 @@ async def run_session(
             existing_root = db.query(AgentTask).filter_by(session_id=session.id, parent_id=None).first()
             if not existing_root:
                 AgentTask(session_id=session.id, title='整体任务', description=new_prompt, status='pending')
+            db.commit()
+        for key in ('max_tokens', 'temperature', 'api_key'):
+            if extra.get(key) is not None:
+                llm_overrides[key] = extra[key]
+        if llm_overrides:
+            meta = session.metadata_ or {}
+            meta.setdefault('llm_params', {})
+            meta['llm_params'].update({k: v for k, v in llm_overrides.items() if v is not None})
+            session.metadata_ = meta
             db.commit()
 
     # schedule background run using fresh DB session

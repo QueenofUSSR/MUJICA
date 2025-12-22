@@ -6,6 +6,17 @@
         "scripts/mcp_demo_server.py"
       ],
       "env": {}
+    },
+    "demo-local": {
+      "command": "C:\\Users\\Administrator\\AppData\\Local\\Microsoft\\WindowsApps\\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\\python.exe",
+      "args": [
+        "E:\\OOAD\\Multi-Agent\\backend\\backend\\scripts\\mcp_demo_server.py"
+      ],
+      "env": {},
+      "metadata": {
+        "templateId": "local-demo",
+        "managed": true
+      }
     }
   }
 }

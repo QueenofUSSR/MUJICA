@@ -242,10 +242,7 @@ const handleLogout = async () => {
 const menuItems = computed(() => {
   return [
     { name: 'profile', path: '/profile', label: '个人中心', icon: 'user' },
-
-    // 新增：MCP 配置入口
-    // icon 建议先用你已确认存在的 'user'，避免 fontawesome 没注册导致不显示
-    { name: 'mcp', path: '/mcp', label: 'MCP', icon: 'user' },
+    { name: 'mcp', path: '/mcp', label: 'MCP配置', icon: 'sliders-h' },
   ];
 })
 

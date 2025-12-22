@@ -46,6 +46,11 @@ class CoordinatorService:
         self._planner = PlannerAgent()
         self._coder = CoderAgent()
         self._debugger = DebuggerAgent()
+        self.default_llm_params = {
+            "max_tokens": 1024,
+            "temperature": 0.2,
+            "api_key": None,
+        }
 
     def append_log(
         self,
@@ -90,11 +95,17 @@ class CoordinatorService:
         model_id: Optional[str],
         prompt: Optional[str] = None,
         role_configs: Optional[Iterable[RoleConfig]] = None,
+        llm_params: Optional[Dict[str, Any]] = None,
     ) -> AgentSession:
         prompt_clean = (prompt or "").strip()
         metadata: Dict[str, Any] = {}
         if prompt_clean:
             metadata = {"prompt": prompt_clean, "messages": [{"role": "user", "content": prompt_clean}]}
+        overrides = llm_params or {}
+        metadata.setdefault("llm_params", {})
+        for key in ("max_tokens", "temperature", "api_key"):
+            if overrides.get(key) is not None:
+                metadata["llm_params"][key] = overrides[key]
         session = AgentSession(
             user_id=user_id,
             title=title,
@@ -274,16 +285,16 @@ class CoordinatorService:
 
         result: Optional[AgentResult] = None
         if role_type == "retrieval":
-            result = await self._retriever.run(prompt, model_id=session.model_id)
+            result = await self._retriever.run(prompt, model_id=session.model_id, llm_params=self._llm_params(session))
         elif role_type == "planning":
-            result = await self._planner.run(prompt, model_id=session.model_id)
+            result = await self._planner.run(prompt, model_id=session.model_id, llm_params=self._llm_params(session))
         elif role_type == "coding":
             # optionally use parent plan
             parent = self.db.query(AgentTask).filter_by(id=task.parent_id).first() if task.parent_id else None
             plan_text = None
             if parent and parent.result:
                 plan_text = parent.result.get("text") or parent.result.get("code")
-            result = await self._coder.run(prompt, plan=plan_text, model_id=session.model_id)
+            result = await self._coder.run(prompt, plan=plan_text, model_id=session.model_id, llm_params=self._llm_params(session))
         elif role_type == "debugging":
             # pass previous code output if any sibling produced code
             code_text = None
@@ -294,7 +305,7 @@ class CoordinatorService:
                     if cand:
                         code_text = cand
                         break
-            result = await self._debugger.run(prompt, code=code_text, model_id=session.model_id)
+            result = await self._debugger.run(prompt, code=code_text, model_id=session.model_id, llm_params=self._llm_params(session))
         else:
             # root or unknown role: just summarize
             result = AgentResult(ok=True, text=f"处理：{task.title}", meta={"type": "generic"})
@@ -350,3 +361,11 @@ class CoordinatorService:
             logger.warning(f"Session {session_id} 不存在")
             return
         await self.run_session(session)
+
+    def _llm_params(self, session: AgentSession) -> Dict[str, Any]:
+        meta = session.metadata_ or {}
+        params = dict(self.default_llm_params)
+        overrides = meta.get("llm_params") or {}
+        params.update({k: v for k, v in overrides.items() if v is not None})
+        return params
+

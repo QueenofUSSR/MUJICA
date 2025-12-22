@@ -8,7 +8,7 @@ from starlette.staticfiles import StaticFiles
 
 from core.dependencies import engine
 from core.models import Base
-from routers import auth, user, agent, mapcoder
+from routers import auth, user, agent, mapcoder, mcp
 
 sys.path.append(str(Path(__file__).parent.parent))
 
@@ -31,6 +31,5 @@ app.include_router(user.router)
 app.include_router(agent.router)
 app.include_router(mapcoder.router)
 
-from routers import mcp
 app.include_router(mcp.router)
 

@@ -31,6 +31,9 @@ class CreateSessionRequest(BaseModel):
     model_id: Optional[str] = None
     prompt: Optional[str] = None
     roles: Optional[List[RoleConfigSchema]] = None
+    max_tokens: Optional[int] = None
+    temperature: Optional[float] = None
+    api_key: Optional[str] = None
 
 
 class SessionSummary(BaseModel):
