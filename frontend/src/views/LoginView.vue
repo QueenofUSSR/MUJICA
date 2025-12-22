@@ -38,8 +38,24 @@
 
     <!-- 右侧面板 - 表单区域 -->
     <div class="form-container">
+      <div class="mode-switch">
+        <button
+          class="mode-btn"
+          :class="{ active: isLoginMode }"
+          @click="switchMode(true)"
+        >
+          登录
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: !isLoginMode }"
+          @click="switchMode(false)"
+        >
+          注册
+        </button>
+      </div>
       <!-- 登录表单 -->
-      <div class="register-form">
+      <div v-if="isLoginMode" class="register-form">
         <div class="form-row">
           <label class="form-label">用户名</label>
           <input
@@ -66,11 +82,73 @@
         </div>
       </div>
 
-      <button class="btn" @click="handleLogin()">
-        登录
+      <div v-else class="register-form">
+        <div class="form-row">
+          <label class="form-label">用户名</label>
+          <input
+            v-model="registerForm.username"
+            type="text"
+            placeholder="请输入用户名"
+            required
+          />
+        </div>
+        <div class="form-row">
+          <label class="form-label">密码</label>
+          <div class="password-wrapper">
+            <input
+              v-model="registerForm.password"
+              :type="showPassword ? 'text' : 'password'"
+              placeholder="请输入密码"
+              required
+            />
+            <button type="button" class="password-toggle" @click="showPassword = !showPassword">
+              <i :class="showPassword ? 'fas fa-eye' : 'fas fa-eye-slash'"></i>
+            </button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label class="form-label">确认密码</label>
+          <input
+            v-model="registerForm.confirmPassword"
+            :type="showPassword ? 'text' : 'password'"
+            placeholder="请再次输入密码"
+            required
+          />
+        </div>
+        <div class="form-row contact-row">
+          <label class="form-label">联系方式</label>
+          <input
+            v-model="registerForm.contact"
+            type="text"
+            placeholder="请输入邮箱或手机号"
+            required
+          />
+          <button class="verify-btn" :disabled="countdown > 0 || sendingCode" @click="sendVerification">
+            {{ countdown > 0 ? `${countdown}s` : sendingCode ? '发送中...' : '发送验证码' }}
+          </button>
+        </div>
+        <div class="form-row">
+          <label class="form-label">验证码</label>
+          <input
+            v-model="registerForm.verificationCode"
+            type="text"
+            placeholder="请输入验证码"
+            required
+          />
+        </div>
+        <div v-if="registerError" class="error-message">
+          {{ registerError }}
+        </div>
+      </div>
+
+      <button
+        class="btn"
+        @click="isLoginMode ? handleLogin() : handleRegister()"
+      >
+        {{ isLoginMode ? '登录' : '注册并登录' }}
       </button>
-      <div class="links">
-        <a href="#" @click="forgetPassword()">忘记密码</a>
+      <div class="links" v-if="isLoginMode">
+        <a href="#" @click="forgetPassword">忘记密码</a>
       </div>
     </div>
 
@@ -94,10 +172,32 @@ export default {
       loginForm: {
         username: '',
         password: '',
-      }
+      },
+      isLoginMode: true,
+      sendingCode: false,
+      countdown: 0,
+      registerForm: {
+        username: '',
+        password: '',
+        confirmPassword: '',
+        contact: '',
+        verificationCode: ''
+      },
+      registerError: '',
+      timerId: null
+    }
+  },
+  beforeUnmount() {
+    if (this.timerId) {
+      clearInterval(this.timerId)
     }
   },
   methods: {
+    switchMode(isLogin) {
+      this.isLoginMode = isLogin
+      this.loginError = ''
+      this.registerError = ''
+    },
     async handleLogin() {
       this.loginError = '';
       if (!this.loginForm.username || !this.loginForm.password) {
@@ -111,8 +211,8 @@ export default {
       try {
         const response = await apiClient.post('/auth/login', payload);
         if (response.data.status === 'success') {
-          const { token, user, categories, factories} = response.data;
-          useAuthStore().initAuth(token, user, categories, factories);
+          const { token, user } = response.data;
+          useAuthStore().initAuth(token, user);
         }else {
           showError('登录失败: ' + response.data.message);
         }
@@ -125,6 +225,92 @@ export default {
 
     forgetPassword() {
       showInfo('请联系管理员重置密码。');
+    },
+
+    async handleRegister() {
+      this.registerError = ''
+      const { username, password, confirmPassword, contact, verificationCode } = this.registerForm
+      if (!username || !password || !contact || !verificationCode) {
+        this.registerError = '请完整填写所有字段'
+        return
+      }
+      if (password !== confirmPassword) {
+        this.registerError = '两次输入的密码不一致'
+        return
+      }
+      const { email, phone, error } = this.parseContact(contact)
+      if (error) {
+        this.registerError = error
+        return
+      }
+      try {
+        const payload = {
+          username,
+          password,
+          phone,
+          email,
+          verificationCode
+        }
+        const response = await apiClient.post('/auth/register', payload)
+        if (response.data.token) {
+          const { token, user } = response.data
+          await useAuthStore().initAuth(token, user)
+        } else {
+          this.registerError = response.data.message || '注册失败'
+        }
+      } catch (error) {
+        this.registerError = error.response?.data?.detail || '注册失败，请稍后重试'
+        handleError(error)
+      }
+    },
+    parseContact(value) {
+      const emailPattern = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/
+      const phonePattern = /^1[3-9]\d{9}$/
+      if (emailPattern.test(value)) {
+        return { email: value, phone: null }
+      }
+      if (phonePattern.test(value)) {
+        return { phone: value, email: null }
+      }
+      return { error: '请输入正确的邮箱或手机号' }
+    },
+    async sendVerification() {
+      this.registerError = ''
+      const contact = this.registerForm.contact
+      if (!contact) {
+        this.registerError = '请先输入联系方式'
+        return
+      }
+      const { email, phone, error } = this.parseContact(contact)
+      if (error) {
+        this.registerError = error
+        return
+      }
+      this.sendingCode = true
+      try {
+        await apiClient.post('/auth/verification', { email, phone })
+        showInfo('验证码已发送，请注意查收')
+        this.startCountdown()
+      } catch (error) {
+        this.registerError = error.response?.data?.detail || '验证码发送失败'
+        handleError(error)
+      } finally {
+        this.sendingCode = false
+      }
+    },
+    startCountdown() {
+      this.countdown = 60
+      if (this.timerId) {
+        clearInterval(this.timerId)
+      }
+      this.timerId = setInterval(() => {
+        if (this.countdown > 0) {
+          this.countdown -= 1
+        } else {
+          clearInterval(this.timerId)
+          this.timerId = null
+        }
+      }, 1000)
     }
   }
 }
@@ -487,6 +673,42 @@ input:focus, select:focus {
   text-align: center;
   font-size: 14px;
   opacity: 0.7;
+}
+
+.mode-switch {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.mode-btn {
+  flex: 1;
+  padding: 10px 0;
+  border: none;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.3s;
+}
+.mode-btn.active {
+  background: rgba(255, 255, 255, 0.4);
+  font-weight: 600;
+}
+.contact-row {
+  gap: 10px;
+}
+.verify-btn {
+  padding: 10px 16px;
+  border: none;
+  background: #4CAF50;
+  color: #fff;
+  border-radius: 8px;
+  cursor: pointer;
+  width: fit-content;
+  white-space: nowrap;
+}
+.verify-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* 响应式设计 */

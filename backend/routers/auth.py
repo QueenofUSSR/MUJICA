@@ -77,35 +77,58 @@ async def refresh_token(input_data: dict = Body(...), db: Session = Depends(get_
 
 
 @router.post("/register", summary="用户注册")
-def register(username: str = Body(..., description="用户名"), password: str = Body(..., description="密码"),
-             factory: str = Body(..., description="工厂名称"), phone: str = Body(..., description="电话号码"),
-             email: str = Body(..., description="电子邮箱"), verificationCode: str = Body(..., description="验证码"),
-             db: Session = Depends(get_db), redis_client: redis.Redis = Depends(get_redis)):
+def register(
+    username: str = Body(..., description="用户名"),
+    password: str = Body(..., description="密码"),
+    phone: Optional[str] = Body(None, description="电话号码"),
+    email: Optional[str] = Body(None, description="电子邮箱"),
+    verificationCode: str = Body(..., description="验证码"),
+    db: Session = Depends(get_db),
+    redis_client: redis.Redis = Depends(get_redis),
+):
     import time
     start_time = time.time()
     logger.info(f"注册开始时间: {start_time}")
 
     try:
         contact = phone or email
+        if not contact:
+            raise HTTPException(status_code=400, detail="请提供手机号或邮箱")
         stored_code = redis_client.get(f"verification_code:{contact}")
+        if isinstance(stored_code, bytes):
+            stored_code = stored_code.decode()
+        elif stored_code is None:
+            stored_code = None
         if not stored_code or stored_code != verificationCode:
             raise HTTPException(status_code=400, detail="验证码无效或已过期")
         # 检查用户名是否已存在
         if db.query(User).filter(User.username == username).first():
             raise HTTPException(status_code=400, detail="用户名已存在")
         hashed_password = pwd_context.hash(password)
-        new_user = User(username=username, hashed_password=hashed_password,  phone=phone, email=email, is_active=True)
+        new_user = User(
+            username=username,
+            hashed_password=hashed_password,
+            phone=phone,
+            email=email,
+            is_active=True,
+        )
         db.add(new_user)
         db.commit()
         db.refresh(new_user)
-        token_data = {"id": new_user.id, "role": new_user.role, "factory": new_user.factory,
-                      "departments": new_user.departments}
-        access_token = create_access_token(data=token_data,
-                                           expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-        return {"token": access_token,
-                "user": {"id": new_user.id, "username": new_user.username, "factory": new_user.factory,
-                         "departments": new_user.departments, "role": new_user.role, "phone": new_user.phone,
-                         "email": new_user.email, "avatar": new_user.avatar}}
+        token_data = {"id": new_user.id}
+        access_token = create_access_token(data=token_data, expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+        return {
+            "token": access_token,
+            "user": {
+                "id": new_user.id,
+                "username": new_user.username,
+                "phone": new_user.phone,
+                "email": new_user.email,
+                "avatar": new_user.avatar,
+            },
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"注册异常: {e}")
         raise HTTPException(status_code=500, detail="注册失败")
@@ -133,7 +156,7 @@ def send_email(to_email: str, code: str):
     smtp_server = "smtp.qq.com"  # QQ 邮箱 SMTP 服务器
     smtp_port = 465
     sender = "chensy_1213@qq.com"  # 你的 QQ 邮箱
-    email_password = "afkydblqtgxjdiai"  # 替换为 QQ 邮箱生成的授权码
+    email_password = "mvcwzcssqkpjeabb"  # 替换为 QQ 邮箱生成的授权码
 
     subject = "验证码通知"
     content = f"您的Multi-Agent账号验证码是：{code}，有效期5分钟。"

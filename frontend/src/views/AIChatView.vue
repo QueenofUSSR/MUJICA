@@ -188,6 +188,8 @@ const llmParams = ref({
   api_key: ''
 });
 const savedLlmParams = ref(null);
+// helper: build per-user draft key used for localStorage caching
+const draftKey = (uid) => `agent_task_draft_${uid}`;
 const savedLlmParamsText = computed(() => {
   if (!savedLlmParams.value) return '';
   const parts = [];

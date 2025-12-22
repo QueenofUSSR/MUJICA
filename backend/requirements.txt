@@ -5,8 +5,8 @@ sqlalchemy
 pydantic
 python-dotenv
 pyjwt
-passlib
-bcrypt
+passlib == 1.7.4
+bcrypt == 4.0.1
 aliyun-python-sdk-core
 aliyun-python-sdk-dysmsapi
 python-jose
