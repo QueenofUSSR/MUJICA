@@ -5,7 +5,6 @@ from sqlalchemy import MetaData
 from sqlalchemy.ext.automap import automap_base
 from sqlalchemy.orm import Session
 
-from core.models import Category
 
 _LOCK = threading.Lock()
 _CACHE: Dict[str, Optional[Dict]] = {"mappings": None, "periods": None}

@@ -8,7 +8,7 @@
             <font-awesome-icon icon="trash-alt"/>
           </button>
           <div class="draft" v-if="hasDraft">草稿已保存</div>
-          <button class="btn run-btn" @click="runSession" :disabled="runDisabled">
+          <button v-if="!isCompletedStatus" class="btn run-btn" @click="runSession" :disabled="runDisabled">
             <span v-if="running" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
             <span v-else >运行任务</span>
           </button>
@@ -285,6 +285,7 @@ const isSessionActive = computed(() => {
   const status = (sessionStatus.value || '').toLowerCase();
   return !!currentSessionId.value && sessionActiveStatuses.includes(status);
 });
+const isCompletedStatus = computed(() => (sessionStatus.value || '').toLowerCase() === 'completed');
 const runDisabled = computed(() => {
   const promptEmpty = !overviewPrompt.value || !overviewPrompt.value.trim();
   return promptEmpty || !conversationId.value || running.value || isSessionActive.value;
