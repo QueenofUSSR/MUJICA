@@ -10,7 +10,7 @@
           <div class="draft" v-if="hasDraft">草稿已保存</div>
           <button class="btn run-btn" @click="runSession" :disabled="runDisabled">
             <span v-if="running" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-            <span v-else style="color: #0b0b49">运行任务</span>
+            <span v-else >运行任务</span>
           </button>
           <button class="btn stop-btn" v-if="canStopSession" @click="stopSession">停止</button>
           <div v-if="runProgress" class="run-progress"
@@ -69,11 +69,30 @@
               <div class="artifact-meta" v-if="savedLlmParamsText">
                 LLM 参数：{{ savedLlmParamsText }}
               </div>
-              <div v-if="finalResult.code">
+              <div v-if="finalResult.code || finalResult.code_str">
                 <div class="code-actions">
-                  <button class="btn btn-download" @click="downloadFinalResult">下载</button>
+                                <button class="btn btn-download" @click="downloadFinalResult">下载</button>
+                                <button class="btn btn-run" v-if="!isEditing" @click="runCodeWithAgent">运行</button>
+                                <button class="btn" v-if="!isEditing" @click="startEdit">编辑</button>
+                                <button class="btn" v-if="isEditing" @click="saveEdit">保存</button>
+                                <button class="btn" v-if="isEditing" @click="cancelEdit">取消</button>
                 </div>
-                <pre class="code-block hljs"><code v-html="highlightCode(finalResult.code)"></code></pre>
+                              <div v-if="!isEditing">
+                                <pre class="code-block hljs"><code v-html="highlightCode(finalResult.code_str || finalResult.code)"></code></pre>
+                              </div>
+                              <div v-else>
+                                <textarea ref="editEl" v-model="editCode" @input="onEditInput" class="prompt-textarea code-edit" style="min-height:160px;white-space:pre;"></textarea>
+                              </div>
+                <div v-if="finalResult.output || finalResult.comment" style="margin-top:12px;">
+                  <div style="margin-bottom:8px;">
+                    <label style="font-weight:600;">程序输出</label>
+                    <pre class="code-block" style="background:#0b1220;color:#dbeafe;padding:10px;">{{ finalResult.output }}</pre>
+                  </div>
+                  <div>
+                    <label style="font-weight:600;">评估结果</label>
+                    <pre class="code-block" style="background:#071029;color:#e6fffa;padding:10px;">{{ finalResult.comment }}</pre>
+                  </div>
+                </div>
               </div>
               <div v-else-if="finalResult.text">
                 <div class="text-artifact" v-html="formatMessage(finalResult.text)"></div>
@@ -179,6 +198,7 @@ const overviewPrompt = ref('');
 const messages = ref([]);
 const input = ref('');
 const inputEl = ref(null); // textarea ref
+const editEl = ref(null); // editor textarea ref (autosize)
 const clearing = ref(false);
 const modelId = ref('gpt-4o');
 const llmParams = ref({
@@ -214,6 +234,8 @@ const logs = ref([]);
 const sessionStatus = ref(''); // 'queued' | 'running' | 'completed' | 'failed' | ''
 const currentSessionId = ref(null);
 let lastTasksRefreshSessionId = null;
+const isEditing = ref(false);
+const editCode = ref('');
 
 // Define loadConversations early so mounted hook can use it safely
 async function loadConversations() {
@@ -537,6 +559,28 @@ onMounted(async () => {
   nextTick(() => adjustTextareaHeight());
 });
 
+// autosize helper: adjust both the prompt textarea and the code editor textarea
+function adjustTextareaHeight() {
+  nextTick(() => {
+    try {
+      if (inputEl.value && inputEl.value.style) {
+        const ta = inputEl.value;
+        ta.style.height = 'auto';
+        const max = Math.round(window.innerHeight * 0.45);
+        ta.style.height = Math.min(ta.scrollHeight, max) + 'px';
+      }
+      if (editEl.value && editEl.value.style) {
+        const ta = editEl.value;
+        ta.style.height = 'auto';
+        const max = Math.round(window.innerHeight - 220);
+        ta.style.height = Math.min(ta.scrollHeight, max) + 'px';
+      }
+    } catch (e) {
+      // ignore
+    }
+  });
+}
+
 // Fix watch signature to remove unused oldVal
 watch(() => route.query?.session_id, async (val) => {
   if (!val) return;
@@ -671,9 +715,105 @@ function inferFileExtension(text, declaredLang) {
 function downloadFinalResult() {
   const fr = finalResult.value;
   if (!fr) return;
-  const content = fr.code || fr.text || JSON.stringify(fr, null, 2);
+  const content = fr.code_str || fr.code || fr.text || JSON.stringify(fr, null, 2);
   const ext = inferFileExtension(content, fr.language || fr.lang || fr.meta?.language);
   downloadBack(content, `result${ext}`);
+}
+
+function startEdit() {
+  if (!finalResult.value) return;
+  editCode.value = finalResult.value.code_str || finalResult.value.code || '';
+  isEditing.value = true;
+  nextTick(() => {
+    try {
+      if (editEl.value && editEl.value.focus) editEl.value.focus();
+    } catch (e) {}
+    adjustTextareaHeight();
+  });
+}
+
+function cancelEdit() {
+  isEditing.value = false;
+  editCode.value = '';
+}
+
+function onEditInput() {
+  adjustTextareaHeight();
+}
+
+async function saveEdit() {
+  if (!conversationId.value) {
+    showError(new Error('没有激活的会话，无法保存'));
+    return;
+  }
+  // update local state immediately
+  const fr = finalResult.value || {};
+  fr.code_str = String(editCode.value || '');
+  fr.code = fr.code || fr.code_str;
+  finalResult.value = fr;
+  isEditing.value = false;
+  try {
+    const res = await apiClient.patch(`/mapcoder/session/${conversationId.value}`, {
+      final_result: finalResult.value
+    });
+    const payload = res.data || {};
+    // backend returns full session detail; normalize final_result
+    if (payload.final_result) {
+      finalResult.value = payload.final_result;
+      finalResult.value.code_str = finalResult.value.code_str || finalResult.value.code;
+      finalResult.value.code = finalResult.value.code || finalResult.value.code_str;
+    }
+    showInfo('保存成功');
+  } catch (e) {
+    console.error('saveEdit error', e);
+    showError(new Error('保存失败'));
+  }
+}
+
+// TODO: 更新finalResult.code为后端code_str
+// TODO：接收后端output和comments等字段，完善运行结果展示
+function runCodeWithAgent() {
+  const sid = conversationId.value;
+  if (!sid) {
+    showError(new Error('没有激活的会话，无法运行代码'));
+    return;
+  }
+  const fr = finalResult.value;
+  const code = fr?.code_str || fr?.code || fr?.text || fr || '';
+  if (!code || String(code).trim() === '') {
+    showError(new Error('没有可运行的代码'));
+    return;
+  }
+  const language = fr?.language || fr?.lang || 'python';
+  // call backend endpoint
+  (async () => {
+    try {
+      showInfo('正在在后台运行代码...');
+      const res = await apiClient.post(`/mapcoder/session/${sid}/run_code`, {
+        code: String(code),
+        language,
+        program_input: ''
+      });
+      if (res && res.data && res.data.final_result) {
+        // normalize backend final_result: prefer code_str, code, output, comment
+        const frx = res.data.final_result || {};
+        frx.code_str = frx.code_str || frx.code || frx.code_str;
+        frx.code = frx.code || frx.code_str;
+        finalResult.value = frx;
+        activeTab.value = 'overview';
+        showInfo('代码运行完成，结果已更新');
+      } else if (res && res.data && res.data.output) {
+        // older style response fallback
+        finalResult.value = { code: String(code), code_str: String(code), output: res.data.output, language };
+        showInfo('代码运行完成，结果已更新');
+      } else {
+        showError(new Error('后端未返回运行结果'));
+      }
+    } catch (e) {
+      console.error('runCodeWithAgent error', e);
+      showError(new Error('运行代码失败'));
+    }
+  })();
 }
 
 function downloadTaskResult(t) {
@@ -1021,6 +1161,44 @@ function truncatedTaskResult(task, limit = 100) {
   color: #1f1f1f;
 }
 
+/* Code-like editor style for the editable final result */
+.code-edit {
+  background-color: #0b1220;
+  color: #e6f0ff;
+  border: 1px solid #26334a;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, 'Roboto Mono', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02), 0 10px 26px rgba(2,6,23,0.35);
+  caret-color: #7ee3ff;
+  min-height: 80px;
+  height: auto;
+  resize: none;
+  max-height: calc(100vh - 220px);
+  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+  box-sizing: border-box;
+}
+.code-edit:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 12px 30px rgba(59,130,246,0.12);
+}
+.code-edit::placeholder {
+  color: rgba(230,240,255,0.35);
+}
+
+/* Ensure displayed (non-edit) code blocks can scroll when very long */
+.final-result .code-block,
+.code-block.hljs {
+  max-height: calc(60vh);
+  overflow: auto;
+  box-sizing: border-box;
+}
+
 .prompt-help {
   font-size: 12px;
   color: #6c757d;
@@ -1145,6 +1323,12 @@ function truncatedTaskResult(task, limit = 100) {
   background: #2f2f2f;
 }
 
+.btn {
+  background: #0066ffff;
+}
+.btn:hover:not(:disabled) {
+  background: #00388dff;
+}
 .logs-panel {
   background-color: #fff;
   border: 1px solid #dfe3eb;

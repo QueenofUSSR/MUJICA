@@ -367,6 +367,14 @@ async def update_session(
     if title is not None:
         session.title = title
         updated = True
+    # allow updating final_result atomically from frontend
+    if isinstance(body, dict) and 'final_result' in body:
+        try:
+            session.final_result = body.get('final_result')
+            updated = True
+        except Exception:
+            # ignore invalid payloads
+            pass
     # potential future fields: status, metadata, summary_title, final_result
     if updated:
         session.updated_at = datetime.now(timezone.utc)
@@ -546,3 +554,75 @@ async def stop_session(
     session.updated_at = datetime.now(timezone.utc)
     db.commit()
     return {"status": "canceled"}
+
+
+@router.post("/session/{session_id}/run_code")
+async def run_code_session(
+    session_id: int,
+    body: Dict = Body(...),
+    db: Session = Depends(get_db),
+    request: Request = None,
+):
+    """Run code using the Debugger agent and attach result to session.final_result.
+
+    Body expects JSON: {"code": "...", "language": "python", "program_input": "..."}
+    """
+    user = _user_from_request(request, db)
+    if not user:
+        raise HTTPException(status_code=401, detail="未认证的用户")
+
+    session = db.query(AgentSession).filter_by(id=session_id, user_id=user.id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="任务会话不存在")
+
+    code = (body.get("code") or "").strip()
+    language = body.get("language") or "python"
+    program_input = body.get("program_input") or ""
+
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少 code 字段")
+
+    # Use Debugger to run and evaluate code
+    try:
+        from core.mapcoder.computeruse import Debugger
+
+        dbg = Debugger(code=code)
+        # 执行并获取结构化结果（优先为 dict，向后兼容字符串）
+        run_res = dbg.run_code(code=code, language=language, program_input=program_input)
+        # 兼容旧版返回 string 的情况
+        output = run_res
+        code_str = dbg.initial_code if hasattr(dbg, 'initial_code') else code
+        comment = None
+        if isinstance(run_res, dict):
+            # 结构化返回：包含 code/code_str, output, comment 等字段
+            code_str = run_res.get('code') or run_res.get('code_str') or code_str
+            output = run_res.get('output')
+            comment = run_res.get('comment') or run_res.get('comments')
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"运行代码失败: {e}")
+
+    # Persist final_result into session for frontend to fetch/update
+    try:
+        fr = {
+            # prefer the updated code_str produced by the evaluator, fall back to dbg.initial_code
+            "code": code_str or (dbg.initial_code if hasattr(dbg, 'initial_code') else code),
+            "code_str": code_str or (dbg.initial_code if hasattr(dbg, 'initial_code') else code),
+            "output": output,
+            "comment": comment,
+            "language": language,
+        }
+        session.final_result = fr
+        session.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception:
+        # non-fatal: continue but warn
+        logger = None
+        try:
+            from core.dependencies import logger as _logger
+            logger = _logger
+        except Exception:
+            logger = None
+        if logger:
+            logger.warning(f"run_code_session: failed to persist final_result for session {session_id}")
+
+    return {"status": "ok", "final_result": session.final_result}
