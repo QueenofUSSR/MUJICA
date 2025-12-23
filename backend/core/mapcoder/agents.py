@@ -68,15 +68,6 @@ class BrowserNavAgent:
     async def run(self, prompt: str, model_id: Optional[str] = None, llm_params: Optional[dict] = None) -> AgentResult:
         params = llm_params or {}
         api_key = params.get("api_key")
-        mode = (params.get("browser_mode") or "auto").lower()
-        system = platform.system().lower()
-
-        if system.startswith("win") and mode != "force_local":
-            msg = ("当前运行环境为 Windows，browser-use 需要 Chromium/Chrome 并依赖 asyncio 子进程，"
-                   "在本机尚未配置兼容驱动前暂不启用浏览器代理。请在服务器或 WSL/Linux 环境下"
-                   "运行，或在参数中将 browser_mode 设置为 force_local 并确保环境已就绪。")
-            logger.warning("BrowserNavAgent skipped: unsupported platform %s", system)
-            return AgentResult(ok=False, text=msg, meta={"type": "browser_navigation", "skipped": True})
 
         # 1. 初始化 LangChain LLM
         llm = ChatOpenAI(model=model_id or "gpt-4o", api_key=api_key, temperature=0.0)

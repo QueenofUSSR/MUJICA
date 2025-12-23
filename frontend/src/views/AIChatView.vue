@@ -10,7 +10,7 @@
           <div class="draft" v-if="hasDraft">草稿已保存</div>
           <button v-if="!isCompletedStatus" class="btn run-btn" @click="runSession" :disabled="runDisabled">
             <span v-if="running" class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
-            <span v-else >运行任务</span>
+            <span v-else>运行任务</span>
           </button>
           <button class="btn stop-btn" v-if="canStopSession" @click="stopSession">停止</button>
           <div v-if="runProgress" class="run-progress"
@@ -71,26 +71,30 @@
               </div>
               <div v-if="finalResult.code || finalResult.code_str">
                 <div class="code-actions">
-                                <button class="btn btn-download" @click="downloadFinalResult">下载</button>
-                                <button class="btn btn-run" v-if="!isEditing" @click="runCodeWithAgent">运行</button>
-                                <button class="btn" v-if="!isEditing" @click="startEdit">编辑</button>
-                                <button class="btn" v-if="isEditing" @click="saveEdit">保存</button>
-                                <button class="btn" v-if="isEditing" @click="cancelEdit">取消</button>
+                  <button class="btn btn-download" @click="downloadFinalResult">下载</button>
+                  <button class="btn btn-run" v-if="!isEditing" @click="runCodeWithAgent">运行</button>
+                  <button class="btn" v-if="!isEditing" @click="startEdit">编辑</button>
+                  <button class="btn" v-if="isEditing" @click="saveEdit">保存</button>
+                  <button class="btn" v-if="isEditing" @click="cancelEdit">取消</button>
                 </div>
-                              <div v-if="!isEditing">
-                                <pre class="code-block hljs"><code v-html="highlightCode(finalResult.code_str || finalResult.code)"></code></pre>
-                              </div>
-                              <div v-else>
-                                <textarea ref="editEl" v-model="editCode" @input="onEditInput" class="prompt-textarea code-edit" style="min-height:160px;white-space:pre;"></textarea>
-                              </div>
+                <div v-if="!isEditing">
+                  <pre class="code-block hljs"><code
+                      v-html="highlightCode(finalResult.code_str || finalResult.code)"></code></pre>
+                </div>
+                <div v-else>
+                  <textarea ref="editEl" v-model="editCode" @input="onEditInput" class="prompt-textarea code-edit"></textarea>
+                </div>
                 <div v-if="finalResult.output || finalResult.comment" style="margin-top:12px;">
                   <div style="margin-bottom:8px;">
                     <label style="font-weight:600;">程序输出</label>
-                    <pre class="code-block" style="background:#0b1220;color:#dbeafe;padding:10px;">{{ finalResult.output }}</pre>
+                    <pre class="code-block" style="background:#0b1220;color:#dbeafe;padding:10px;">{{
+                        finalResult.output
+                      }}</pre>
                   </div>
                   <div>
                     <label style="font-weight:600;">评估结果</label>
-                    <pre class="code-block" style="background:#071029;color:#e6fffa;padding:10px;">{{ finalResult.comment }}</pre>
+                    <pre class="code-block"
+                         style="background:#071029;color:#e6fffa;padding:10px;">{{ finalResult.comment }}</pre>
                   </div>
                 </div>
               </div>
@@ -573,8 +577,7 @@ function adjustTextareaHeight() {
       if (editEl.value && editEl.value.style) {
         const ta = editEl.value;
         ta.style.height = 'auto';
-        const max = Math.round(window.innerHeight - 220);
-        ta.style.height = Math.min(ta.scrollHeight, max) + 'px';
+        ta.style.height = ta.scrollHeight + 'px';
       }
     } catch (e) {
       // ignore
@@ -685,7 +688,7 @@ async function stopSession() {
 }
 
 function downloadBack(content, filename) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob([content], {type: 'text/plain;charset=utf-8'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const name = filename.replace(/\s+/g, '_');
@@ -728,7 +731,8 @@ function startEdit() {
   nextTick(() => {
     try {
       if (editEl.value && editEl.value.focus) editEl.value.focus();
-    } catch (e) {}
+    } catch (e) {
+    }
     adjustTextareaHeight();
   });
 }
@@ -805,7 +809,7 @@ function runCodeWithAgent() {
         showInfo('代码运行完成，结果已更新');
       } else if (res && res.data && res.data.output) {
         // older style response fallback
-        finalResult.value = { code: String(code), code_str: String(code), output: res.data.output, language };
+        finalResult.value = {code: String(code), code_str: String(code), output: res.data.output, language};
         showInfo('代码运行完成，结果已更新');
       } else {
         showError(new Error('后端未返回运行结果'));
@@ -1173,30 +1177,32 @@ function truncatedTaskResult(task, limit = 100) {
   font-size: 13px;
   line-height: 1.5;
   white-space: pre;
-  overflow: auto;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.02), 0 10px 26px rgba(2,6,23,0.35);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 10px 26px rgba(2, 6, 23, 0.35);
   caret-color: #7ee3ff;
   min-height: 80px;
   height: auto;
   resize: none;
-  max-height: calc(100vh - 220px);
+  max-height: none;
   transition: box-shadow 0.12s ease, border-color 0.12s ease;
   box-sizing: border-box;
 }
+
 .code-edit:focus {
   outline: none;
   border-color: #3b82f6;
-  box-shadow: 0 12px 30px rgba(59,130,246,0.12);
+  box-shadow: 0 12px 30px rgba(59, 130, 246, 0.12);
 }
+
 .code-edit::placeholder {
-  color: rgba(230,240,255,0.35);
+  color: rgba(230, 240, 255, 0.35);
 }
 
 /* Ensure displayed (non-edit) code blocks can scroll when very long */
 .final-result .code-block,
 .code-block.hljs {
-  max-height: calc(60vh);
-  overflow: auto;
+  height: 100%;
+  overflow: visible;
   box-sizing: border-box;
 }
 
@@ -1225,11 +1231,20 @@ function truncatedTaskResult(task, limit = 100) {
 }
 
 .code-block {
-  background-color: #0f172a;
-  color: #f8fafc;
-  padding: 12px;
-  border-radius: 6px;
-  overflow-x: auto;
+   background-color: #0f172a;
+   color: #f8fafc;
+   padding: 12px;
+   border-radius: 6px;
+   overflow-x: auto;
+ }
+
+.text-artifact {
+   background-color: #0f172a;
+   color: #f8fafc;
+   padding: 12px;
+   border-radius: 6px;
+   line-height: 1.5;
+   word-break: break-word;
 }
 
 .task-list {
@@ -1327,9 +1342,11 @@ function truncatedTaskResult(task, limit = 100) {
 .btn {
   background: #0066ffff;
 }
+
 .btn:hover:not(:disabled) {
   background: #00388dff;
 }
+
 .logs-panel {
   background-color: #fff;
   border: 1px solid #dfe3eb;

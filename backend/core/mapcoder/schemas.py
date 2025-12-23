@@ -36,6 +36,11 @@ class CreateSessionRequest(BaseModel):
     api_key: Optional[str] = None
 
 
+class UpdateSessionRequest(BaseModel):
+    title: Optional[str] = None
+    final_result: Optional[Dict[str, Any]] = None
+
+
 class SessionSummary(BaseModel):
     id: int
     user_id: int
@@ -65,6 +70,7 @@ __all__ = [
     "RoleConfig",
     "RoleConfigSchema",
     "CreateSessionRequest",
+    "UpdateSessionRequest",
     "SessionSummary",
     "SessionDetail",
     "SessionStatusResponse",

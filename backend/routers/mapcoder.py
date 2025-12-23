@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from core.dependencies import get_db, SessionLocal, get_redis, SECRET_KEY, ALGORITHM, logger
 from core.mapcoder.coordinator import CoordinatorService
-from core.mapcoder.schemas import CreateSessionRequest, SessionDetail, SessionStatusResponse, SessionSummary
+from core.mapcoder.schemas import CreateSessionRequest, UpdateSessionRequest, SessionDetail, SessionStatusResponse, SessionSummary
 from core.models import AgentSession, AgentTask, AgentTaskLog, User
 import jwt
 from redis import exceptions as redis_exceptions
@@ -351,7 +351,7 @@ async def run_session(
 @router.patch("/session/{session_id}")
 async def update_session(
     session_id: int,
-    body: Dict[str, Optional[str]] = Body(...),
+    body: UpdateSessionRequest = Body(...),
     db: Session = Depends(get_db),
     request: Request = None,
     # current_user: dict = Depends(get_current_user),
@@ -363,18 +363,14 @@ async def update_session(
     if not session:
         raise HTTPException(status_code=404, detail="任务会话不存在")
     updated = False
-    title = body.get('title') if isinstance(body, dict) else None
+    title = body.title
     if title is not None:
         session.title = title
         updated = True
     # allow updating final_result atomically from frontend
-    if isinstance(body, dict) and 'final_result' in body:
-        try:
-            session.final_result = body.get('final_result')
-            updated = True
-        except Exception:
-            # ignore invalid payloads
-            pass
+    if body.final_result is not None:
+        session.final_result = body.final_result
+        updated = True
     # potential future fields: status, metadata, summary_title, final_result
     if updated:
         session.updated_at = datetime.now(timezone.utc)
