@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from core.dependencies import logger, publish_event
 from core.models import AgentRole, AgentSession, AgentTask, AgentTaskLog
 from core.mapcoder.schemas import RoleConfig
-from .agents import RetrieverAgent, PlannerAgent, CoderAgent, DebuggerAgent, AgentResult
+from .agents import RetrieverAgent, PlannerAgent, CoderAgent, DebuggerAgent, BrowserNavAgent, AgentResult
 
 
 MAPCODER_DEFAULT_ROLES: List[RoleConfig] = [
@@ -18,6 +18,7 @@ MAPCODER_DEFAULT_ROLES: List[RoleConfig] = [
     RoleConfig(name="planner", description="生成多候选计划", capabilities={"type": "planning"}),
     RoleConfig(name="coder", description="根据计划生成代码", capabilities={"type": "coding"}),
     RoleConfig(name="debugger", description="基于样例调试并修复", capabilities={"type": "debugging"}),
+    RoleConfig(name="browser", description="操控浏览器执行任务", capabilities={"type": "browser_navigation"})
 ]
 
 _CODE_FENCE = re.compile(r"```(?:[a-zA-Z0-9_+-]+)?\s*([\s\S]*?)```", re.MULTILINE)
@@ -46,6 +47,7 @@ class CoordinatorService:
         self._planner = PlannerAgent()
         self._coder = CoderAgent()
         self._debugger = DebuggerAgent()
+        self._browser = BrowserNavAgent()
         self.default_llm_params = {
             "max_tokens": 1024,
             "temperature": 0.2,
@@ -190,7 +192,38 @@ class CoordinatorService:
             session.updated_at = datetime.now(timezone.utc)
             self.db.commit()
             return
-
+        #0) Browser Use
+        if any(k in prompt for k in ["搜索", "查", "浏览", "访问", "search", "browse"]):
+            if _canceled(): return
+            
+            # 获取 browser 角色
+            browser_role = self.db.query(AgentRole).filter_by(name="browser").first()
+            if not browser_role:
+                # 假如数据库没初始化这个角色，临时创建或者跳过
+                self.append_log(session.id, "未找到 browser 角色，跳过浏览器步骤", level="WARNING")
+            else:
+                browser_task = AgentTask(
+                    session_id=session.id, 
+                    parent_id=root.id, 
+                    assigned_role_id=browser_role.id, 
+                    title="Browser 自动化任务", 
+                    description=f"利用浏览器执行：{prompt}", 
+                    status="pending"
+                )
+                self.db.add(browser_task); self.db.flush()
+                
+                # 执行
+                await self._run_task(session, browser_task)
+                
+                # 可选：将浏览器的结果追加到 Prompt 中，供后续 Planner 参考
+                if browser_task.result and isinstance(browser_task.result, dict):
+                    browser_out = browser_task.result.get("text", "")
+                    prompt += f"\n\n[补充信息] 浏览器搜索结果：\n{browser_out}"
+                    # 更新 session metadata 里的 prompt 供后续使用
+                    meta = session.metadata_ or {}
+                    meta["prompt"] = prompt
+                    session.metadata_ = meta
+                    self.db.commit()
         # 1) retriever
         if _canceled():
             self.append_log(session.id, "任务已被用户停止", level="INFO")
@@ -306,6 +339,12 @@ class CoordinatorService:
                         code_text = cand
                         break
             result = await self._debugger.run(prompt, code=code_text, model_id=session.model_id, llm_params=self._llm_params(session))
+        elif role_type == "browser_navigation":
+            result = await self._browser.run(
+                prompt, 
+                model_id=session.model_id, 
+                llm_params=self._llm_params(session)
+            )
         else:
             # root or unknown role: just summarize
             result = AgentResult(ok=True, text=f"处理：{task.title}", meta={"type": "generic"})
